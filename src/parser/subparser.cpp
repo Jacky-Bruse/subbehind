@@ -2709,15 +2709,22 @@ void explodeSub(std::string sub, std::vector<Proxy> &nodes) {
         throw;
     }
     try {
+        std::string pattern = "\"?(inbounds)\"?:";
         if (!processed &&
-            regFind(sub, "^(?=.*(\"?(inbounds)\"?:))(?=.*(\"?(outbounds)\"?:))(?=.*(\"?(route)\"?:)).*")) {
-            rapidjson::Document document;
-            document.Parse(sub.c_str());
-            if (!document.HasParseError() || document.IsObject()) {
-                rapidjson::Value &value = document["outbounds"];
-                if (value.IsArray() && !value.Empty()) {
-                    explodeSingbox(value, nodes);
-                    processed = true;
+            regFind(sub, pattern)) {
+            pattern = "\"?(outbounds)\"?:";
+            if (regFind(sub, pattern)) {
+                pattern = "\"?(route)\"?:";
+                if (regFind(sub, pattern)) {
+                    rapidjson::Document document;
+                    document.Parse(sub.c_str());
+                    if (!document.HasParseError() || document.IsObject()) {
+                        rapidjson::Value &value = document["outbounds"];
+                        if (value.IsArray() && !value.Empty()) {
+                            explodeSingbox(value, nodes);
+                            processed = true;
+                        }
+                    }
                 }
             }
         }
