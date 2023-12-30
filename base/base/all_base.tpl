@@ -5,26 +5,32 @@ allow-lan: {{ default(global.clash.allow_lan, "true") }}
 mode: Rule
 log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: :9090
-{% if default(request.clash.dns, "") == "1" %}
 dns:
   enable: true
-  listen: :1053
+  prefer-h3: false
+  listen: 0.0.0.0:1053
+  ipv6: false
+  default-nameserver:
+    - https://223.5.5.5/dns-query
   nameserver:
-  {% if request.clash.doh == "true" %}
-  https://doh.pub/dns-query
-  https://223.5.5.5/dns-query
-  https://doh.360.cn/dns-query
-  https://dns.alidns.com/dns-query
-  {% else %}
-  119.29.29.29
-  223.5.5.5
-  {% endif %}
+    - https://doh.pub/dns-query
+    - https://dns.alidns.com/dns-query
   fallback:
-  8.8.8.8
-  8.8.4.4
-  tls://1.0.0.1:853
-  tls://dns.google:853
-{% endif %}
+    - https://1.0.0.1/dns-query
+    - tls://1.1.1.1
+  proxy-server-nameserver:
+    - https://doh.pub/dns-query
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    geosite:
+      - gfw
+    ipcidr:
+      - 240.0.0.0/4
+    domain:
+      - '+.google.com'
+      - '+.facebook.com'
+      - '+.youtube.com'
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
 proxy-groups: ~
