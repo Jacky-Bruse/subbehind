@@ -11,7 +11,7 @@ dns:
   listen: 0.0.0.0:1053
   ipv6: false
   default-nameserver:
-    - https://223.5.5.5/dns-query
+    - https://dns.alidns.com/dns-query
   nameserver:
     - https://doh.pub/dns-query
     - https://223.5.5.5/dns-query
