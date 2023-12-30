@@ -17,7 +17,7 @@ dns:
     - https://dns.alidns.com/dns-query
   fallback:
     - https://1.0.0.1/dns-query
-    - tls://1.1.1.1
+    - https://dns.google/dns-query
   proxy-server-nameserver:
     - https://doh.pub/dns-query
   fallback-filter:
@@ -298,7 +298,7 @@ enhanced-mode-by-rule = true
         "servers": [
             {
                 "tag": "dns_proxy",
-                "address": "tls://1.1.1.1",
+                "address": "https://1.0.0.1/dns-query",
                 "address_resolver": "dns_resolver"
             },
             {
