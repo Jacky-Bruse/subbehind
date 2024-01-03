@@ -116,7 +116,8 @@ void httpConstruct(Proxy &node, const std::string &group, const std::string &rem
 
 void trojanConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &server,
                      const std::string &port, const std::string &password, const std::string &network,
-                     const std::string &host, const std::string &path, const std::string &fp, bool tlssecure,
+                     const std::string &host, const std::string &path, const std::string &fp, const std::string &sni,
+                     bool tlssecure,
                      tribool udp, tribool tfo,
                      tribool scv, tribool tls13) {
     commonConstruct(node, ProxyType::Trojan, group, remarks, server, port, udp, tfo, scv, tls13);
@@ -126,6 +127,7 @@ void trojanConstruct(Proxy &node, const std::string &group, const std::string &r
     node.TransferProtocol = network.empty() ? "tcp" : network;
     node.Path = path;
     node.Fingerprint = fp;
+    node.ServerName = sni;
 }
 
 void snellConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &server,
@@ -805,7 +807,7 @@ void explodeHTTPSub(std::string link, Proxy &node) {
 }
 
 void explodeTrojan(std::string trojan, Proxy &node) {
-    std::string server, port, psk, addition, group, remark, host, path, network, fp;
+    std::string server, port, psk, addition, group, remark, host, path, network, fp, sni;
     tribool tfo, scv;
     if (startsWith(trojan, "trojan://")) {
         trojan.erase(0, 9);
@@ -830,6 +832,7 @@ void explodeTrojan(std::string trojan, Proxy &node) {
         return;
 
     host = getUrlArg(addition, "sni");
+    sni = getUrlArg(addition, "sni");
     if (host.empty())
         host = getUrlArg(addition, "peer");
     tfo = getUrlArg(addition, "tfo");
@@ -855,7 +858,7 @@ void explodeTrojan(std::string trojan, Proxy &node) {
     if (group.empty())
         group = TROJAN_DEFAULT_GROUP;
 
-    trojanConstruct(node, group, remark, server, port, psk, network, host, path, fp, true, tribool(), tfo, scv);
+    trojanConstruct(node, group, remark, server, port, psk, network, host, path, fp, sni, true, tribool(), tfo, scv);
 }
 
 void explodeVless(std::string vless, Proxy &node) {
@@ -1031,9 +1034,11 @@ void explodeNetch(std::string netch, Proxy &node) {
             path = GetMember(json, "Path");
             transprot = GetMember(json, "TransferProtocol");
             tls = GetMember(json, "TLSSecure");
+            sni = host;
             if (group.empty())
                 group = TROJAN_DEFAULT_GROUP;
-            trojanConstruct(node, group, remark, address, port, password, transprot, host, path, fp, tls == "true", udp,
+            trojanConstruct(node, group, remark, address, port, password, transprot, host, path, fp, sni, tls == "true",
+                            udp,
                             tfo, scv);
             break;
         case "Snell"_hash:
@@ -1050,22 +1055,22 @@ void explodeNetch(std::string netch, Proxy &node) {
 }
 
 void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
-    std::string proxytype, ps, server, port, cipher, group, password = "", ports, tempPassword; //common
-    std::string type = "none", id, aid = "0", net = "tcp", path, host, edge, tls, sni; //vmess
-    std::string fp = "chrome", pbk, sid; //vless
-    std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
-    std::string protocol, protoparam, obfs, obfsparam; //ssr
-    std::string flow, mode; //trojan
-    std::string user; //socks
-    std::string ip, ipv6, private_key, public_key, mtu; //wireguard
-    std::string auth, up, down, obfsParam, insecure, alpn;//hysteria
-    std::string obfsPassword;//hysteria2
-    string_array dns_server;
-    tribool udp, tfo, scv;
     Node singleproxy;
     uint32_t index = nodes.size();
     const std::string section = yamlnode["proxies"].IsDefined() ? "proxies" : "Proxy";
     for (uint32_t i = 0; i < yamlnode[section].size(); i++) {
+        std::string proxytype, ps, server, port, cipher, group, password = "", ports, tempPassword; //common
+        std::string type = "none", id, aid = "0", net = "tcp", path, host, edge, tls, sni; //vmess
+        std::string fp = "chrome", pbk, sid; //vless
+        std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
+        std::string protocol, protoparam, obfs, obfsparam; //ssr
+        std::string flow, mode; //trojan
+        std::string user; //socks
+        std::string ip, ipv6, private_key, public_key, mtu; //wireguard
+        std::string auth, up, down, obfsParam, insecure, alpn;//hysteria
+        std::string obfsPassword;//hysteria2
+        string_array dns_server;
+        tribool udp, tfo, scv;
         Proxy node;
         singleproxy = yamlnode[section][i];
         singleproxy["type"] >>= proxytype;
@@ -1224,6 +1229,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 group = TROJAN_DEFAULT_GROUP;
                 singleproxy["password"] >>= password;
                 singleproxy["sni"] >>= host;
+                singleproxy["sni"] >>= sni;
                 singleproxy["network"] >>= net;
                 switch (hash_(net)) {
                     case "grpc"_hash:
@@ -1238,7 +1244,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         break;
                 }
 
-                trojanConstruct(node, group, ps, server, port, password, net, host, path, fp, true, udp, tfo, scv);
+                trojanConstruct(node, group, ps, server, port, password, net, host, path, fp, sni, true, udp, tfo, scv);
                 break;
             case "snell"_hash:
                 group = SNELL_DEFAULT_GROUP;
@@ -1672,7 +1678,7 @@ bool explodeSurge(std::string surge, std::vector<Proxy> &nodes) {
     const std::string proxystr = "(.*?)\\s*=\\s*(.*)";
 
     for (auto &x: proxies) {
-        std::string remarks, server, port, method, username, password; //common
+        std::string remarks, server, port, method, username, password, sni; //common
         std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, mod_url, mod_md5; //ss
         std::string id, net, tls, host, edge, path, fp; //v2
         std::string protocol, protoparam; //ssr
@@ -1943,6 +1949,7 @@ bool explodeSurge(std::string surge, std::vector<Proxy> &nodes) {
                             break;
                         case "sni"_hash:
                             host = itemVal;
+                            sni = itemVal;
                             break;
                         case "udp-relay"_hash:
                             udp = itemVal;
@@ -1961,7 +1968,8 @@ bool explodeSurge(std::string surge, std::vector<Proxy> &nodes) {
                     }
                 }
 
-                trojanConstruct(node, TROJAN_DEFAULT_GROUP, remarks, server, port, password, "", host, "", fp, true,
+                trojanConstruct(node, TROJAN_DEFAULT_GROUP, remarks, server, port, password, "", host, "", fp, sni,
+                                true,
                                 udp,
                                 tfo, scv);
                 break;
@@ -2250,6 +2258,7 @@ bool explodeSurge(std::string surge, std::vector<Proxy> &nodes) {
                                     break;
                                 case "tls-host"_hash:
                                     host = itemVal;
+                                    sni = itemVal;
                                     break;
                                 case "udp-relay"_hash:
                                     udp = itemVal;
@@ -2274,6 +2283,7 @@ bool explodeSurge(std::string surge, std::vector<Proxy> &nodes) {
                             remarks = server + ":" + port;
 
                         trojanConstruct(node, TROJAN_DEFAULT_GROUP, remarks, server, port, password, "", host, "", fp,
+                                        sni,
                                         tls == "true", udp, tfo, scv, tls13);
                         break;
                     case "http"_hash: //quantumult x style http links
@@ -2497,21 +2507,21 @@ void explodeSingboxTransport(rapidjson::Value &singboxNode, std::string &net, st
 }
 
 void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
-    std::string proxytype, ps, server, port, cipher, group, password = "", ports, tempPassword; //common
-    std::string type = "none", id, aid = "0", net = "tcp", path, host, edge, tls, sni; //vmess
-    std::string fp = "chrome", pbk, sid; //vless
-    std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
-    std::string protocol, protoparam, obfs, obfsparam; //ssr
-    std::string flow, mode; //trojan
-    std::string user; //socks
-    std::string ip, ipv6, private_key, public_key, mtu; //wireguard
-    std::string auth, up, down, obfsParam, insecure, alpn;//hysteria
-    std::string obfsPassword;//hysteria2
-    string_array dns_server;
-    tribool udp, tfo, scv;
     uint32_t index = nodes.size();
     for (rapidjson::SizeType i = 0; i < outbounds.Size(); ++i) {
         if (outbounds[i].IsObject()) {
+            std::string proxytype, ps, server, port, cipher, group, password, ports, tempPassword; //common
+            std::string type = "none", id, aid = "0", net = "tcp", path, host, edge, tls, sni; //vmess
+            std::string fp = "chrome", pbk, sid; //vless
+            std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
+            std::string protocol, protoparam, obfs, obfsparam; //ssr
+            std::string flow, mode; //trojan
+            std::string user; //socks
+            std::string ip, ipv6, private_key, public_key, mtu; //wireguard
+            std::string auth, up, down, obfsParam, insecure, alpn;//hysteria
+            std::string obfsPassword;//hysteria2
+            string_array dns_server;
+            tribool udp, tfo, scv;
             rapidjson::Value singboxNode = outbounds[i].GetObject();
             if (singboxNode.HasMember("type") && singboxNode["type"].IsString()) {
                 Proxy node;
@@ -2522,7 +2532,9 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                 tfo = GetMember(singboxNode, "tcp_fast_open");
                 if (singboxNode.HasMember("tls") && singboxNode["tls"].IsObject()) {
                     rapidjson::Value tlsObj = singboxNode["tls"].GetObject();
-                    tls = "tls";
+                    if (tlsObj.HasMember("enabled") && tlsObj["enabled"].IsBool() && tlsObj["enabled"].GetBool()) {
+                        tls = "tls";
+                    }
                     sni = GetMember(tlsObj, "server_name");
                     if (tlsObj.HasMember("alpn") && tlsObj["alpn"].IsArray() && !tlsObj["alpn"].Empty()) {
                         rapidjson::Value alpns = tlsObj["alpn"].GetArray();
@@ -2534,6 +2546,7 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                         scv = tlsObj["insecure"].GetBool();
                     }
                     if (tlsObj.HasMember("reality") && tlsObj["reality"].IsObject()) {
+                        tls = "reality";
                         rapidjson::Value reality = tlsObj["reality"].GetObject();
                         if (reality.HasMember("server_name") && reality["server_name"].IsString()) {
                             host = reality["server_name"].GetString();
@@ -2545,6 +2558,8 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                             sid = reality["short_id"].GetString();
                         }
                     }
+                } else {
+                    tls = "false";
                 }
                 switch (hash_(proxytype)) {
                     case "vmess"_hash:
@@ -2572,7 +2587,8 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                         group = TROJAN_DEFAULT_GROUP;
                         password = GetMember(singboxNode, "password");
                         explodeSingboxTransport(singboxNode, net, host, path, edge);
-                        trojanConstruct(node, group, ps, server, port, password, net, host, path, fp, true, udp, tfo,
+                        trojanConstruct(node, group, ps, server, port, password, net, host, path, fp, sni, true, udp,
+                                        tfo,
                                         scv);
                         break;
                     case "vless"_hash:
@@ -2621,7 +2637,7 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                     case "http"_hash:
                         password = GetMember(singboxNode, "password");
                         user = GetMember(singboxNode, "username");
-                        httpConstruct(node, group, ps, server, port, user, password, tls == "true", tfo, scv);
+                        httpConstruct(node, group, ps, server, port, user, password, tls == "tls", tfo, scv);
                         break;
                     case "wireguard"_hash:
                         group = WG_DEFAULT_GROUP;

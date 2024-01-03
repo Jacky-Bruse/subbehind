@@ -382,10 +382,14 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
             case ProxyType::Trojan:
                 singleproxy["type"] = "trojan";
                 singleproxy["password"] = x.Password;
-                if (!x.Host.empty())
+                if (!x.ServerName.empty())
+                    singleproxy["sni"] = x.ServerName;
+                else if (!x.Host.empty()) {
                     singleproxy["sni"] = x.Host;
-                if (std::all_of(x.Password.begin(), x.Password.end(), ::isdigit) && !x.Password.empty())
+                }
+                if (std::all_of(x.Password.begin(), x.Password.end(), ::isdigit) && !x.Password.empty()) {
                     singleproxy["password"].SetTag("str");
+                }
                 if (!scv.is_undef())
                     singleproxy["skip-cert-verify"] = scv.get();
                 switch (hash_(x.TransferProtocol)) {
@@ -442,8 +446,9 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.Ports.empty()) {
                     singleproxy["ports"] = x.Ports;
                 }
-                if (!tfo.is_undef()){
-                    singleproxy["fast-open"] = tfo.get();}
+                if (!tfo.is_undef()) {
+                    singleproxy["fast-open"] = tfo.get();
+                }
                 if (!x.FakeType.empty())
                     singleproxy["protocol"] = x.FakeType;
                 if (!x.ServerName.empty())
@@ -748,7 +753,7 @@ std::string proxyToSurge(std::vector<Proxy> &nodes, const std::string &base_conf
 
         processRemark(x.Remark, remarks_list);
 
-        std::string &hostname = x.Hostname, &username = x.Username, &password = x.Password, &method = x.EncryptMethod, &id = x.UserId, &transproto = x.TransferProtocol, &host = x.Host, &edge = x.Edge, &path = x.Path, &protocol = x.Protocol, &protoparam = x.ProtocolParam, &obfs = x.OBFS, &obfsparam = x.OBFSParam, &plugin = x.Plugin, &pluginopts = x.PluginOption;
+        std::string &hostname = x.Hostname, &sni = x.ServerName, &username = x.Username, &password = x.Password, &method = x.EncryptMethod, &id = x.UserId, &transproto = x.TransferProtocol, &host = x.Host, &edge = x.Edge, &path = x.Path, &protocol = x.Protocol, &protoparam = x.ProtocolParam, &obfs = x.OBFS, &obfsparam = x.OBFSParam, &plugin = x.Plugin, &pluginopts = x.PluginOption;
         std::string port = std::to_string(x.Port);
         bool &tlssecure = x.TLSSecure;
 
@@ -864,8 +869,11 @@ std::string proxyToSurge(std::vector<Proxy> &nodes, const std::string &base_conf
                 proxy = "trojan, " + hostname + ", " + port + ", password=" + password;
                 if (x.SnellVersion != 0)
                     proxy += ", version=" + std::to_string(x.SnellVersion);
-                if (!host.empty())
+                if (!sni.empty()) {
+                    proxy += ", sni=" + sni;
+                } else if (!host.empty()) {
                     proxy += ", sni=" + host;
+                }
                 if (!scv.is_undef())
                     proxy += ", skip-cert-verify=" + scv.get_str();
                 break;
@@ -994,7 +1002,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
 
     for (Proxy &x: nodes) {
         std::string remark = x.Remark;
-        std::string &hostname = x.Hostname, &password = x.Password, &method = x.EncryptMethod, &plugin = x.Plugin, &pluginopts = x.PluginOption, &protocol = x.Protocol, &protoparam = x.ProtocolParam, &obfs = x.OBFS, &obfsparam = x.OBFSParam, &id = x.UserId, &transproto = x.TransferProtocol, &host = x.Host, &path = x.Path, &faketype = x.FakeType;
+        std::string &hostname = x.Hostname, &sni = x.ServerName, &password = x.Password, &method = x.EncryptMethod, &plugin = x.Plugin, &pluginopts = x.PluginOption, &protocol = x.Protocol, &protoparam = x.ProtocolParam, &obfs = x.OBFS, &obfsparam = x.OBFSParam, &id = x.UserId, &transproto = x.TransferProtocol, &host = x.Host, &path = x.Path, &faketype = x.FakeType;
         bool &tlssecure = x.TLSSecure;
         std::string port = std::to_string(x.Port);
         std::string aid = std::to_string(x.AlterId);
@@ -1044,8 +1052,11 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                     continue;
                 proxyStr = "trojan://" + password + "@" + hostname + ":" + port + "?allowInsecure=" +
                            (x.AllowInsecure.get() ? "1" : "0");
-                if (!host.empty())
+                if (!sni.empty()) {
+                    proxyStr += "&sni=" + sni;
+                } else if (!host.empty()) {
                     proxyStr += "&sni=" + host;
+                }
                 if (transproto == "ws") {
                     proxyStr += "&ws=1";
                     if (!path.empty())
