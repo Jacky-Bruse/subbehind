@@ -19,7 +19,7 @@ dns:
     - https://dns.alidns.com/dns-query
   fallback:
     - https://1.0.0.1/dns-query
-    - https://dns.google/dns-query
+    - https://8.8.8.8/dns-query
   proxy-server-nameserver:
     - https://doh.pub/dns-query
   fallback-filter:
