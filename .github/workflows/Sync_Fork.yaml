@@ -1,0 +1,54 @@
+name: Upstream Sync
+
+permissions:
+  contents: write
+
+on:
+  push: # push 时触发, 主要是为了测试配置有没有问题
+  schedule:
+    - cron: '0 8 * * *' # 每小时 0分触发, 对于一些更新不那么频繁的项目可以设置为每天一次, 低碳一点
+  workflow_dispatch:
+
+jobs:
+  sync_latest_from_upstream:
+    name: Sync latest commits from upstream repo
+    runs-on: ubuntu-latest
+    if: ${{ github.event.repository.fork }}
+
+    steps:
+      # Step 1: run a standard checkout action
+      - name: Checkout target repo
+        uses: actions/checkout@v3
+
+      # Step 2: run the sync action
+      - name: Sync upstream changes
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+        with:
+          upstream_sync_repo: asdlokj1qpi23/subconverter     #修改原库
+          upstream_sync_branch: master              #对应分支
+          target_sync_branch: master                #fork后的分支
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }} # automatically generated, no need to set
+
+          # Set test_mode true to run tests instead of the true action!!
+          test_mode: false
+
+      - name: Sync check
+        if: failure()
+        run: |
+          echo "[Error] 由于上游仓库的 workflow 文件变更，导致 GitHub 自动暂停了本次自动更新，你需要手动 Sync Fork 一次"
+          echo "[Error] Due to a change in the workflow file of the upstream repository, GitHub has automatically suspended the scheduled automatic update. You need to manually sync your fork."
+          exit 1
+
+
+      - name: Notify Telegram
+        run: |
+          MESSAGE="${{ job.status == 'success' && 'Music_API更新成功' || '⚠ Music_API更新失败' }}！"
+          curl -X POST "https://api.telegram.org/bot${{ secrets.BOT_TOKEN }}/sendMessage" -d "chat_id=${{ secrets.CHAT_ID }}&text=$MESSAGE" || echo "Failed to send Telegram message"
+
+      - name: Delete old workflow runs
+        uses: Mattraks/delete-workflow-runs@v2.0.6
+        with:
+          retain_days: '20' # 删除20天前的 runs
+          token: ${{ secrets.PAT_TOKEN }}
+          keep_minimum_runs: 5
