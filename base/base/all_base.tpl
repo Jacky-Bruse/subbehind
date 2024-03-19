@@ -7,7 +7,7 @@ log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: :9090
 dns:
   enable: true
-  prefer-h3: false
+  prefer-h3: true
   listen: 0.0.0.0:1053
   ipv6: false
   default-nameserver:
