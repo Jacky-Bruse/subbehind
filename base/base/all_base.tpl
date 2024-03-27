@@ -9,12 +9,14 @@ dns:
   enable: true
   listen: 0.0.0.0:53
   ipv6: true
-  default-nameserver:
+  default-nameserver: 
+    - 223.5.5.5
+    - 114.114.114.114
     - 1.1.1.1
     - 8.8.8.8
   nameserver:
-    - https://doh.pub/dns-query
     - https://dns.alidns.com/dns-query
+    - https://doh.pub/dns-query
   fallback:
     - https://1.1.1.2/dns-query
     - https://1.0.0.2/dns-query
