@@ -7,32 +7,23 @@ log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: :9090
 dns:
   enable: true
-  prefer-h3: true
-  listen: 0.0.0.0:1053
-  ipv6: false
+  listen: 0.0.0.0:53
+  ipv6: true
   default-nameserver:
-    - https://223.5.5.5/dns-query
+    - 1.1.1.1
+    - 8.8.8.8
   nameserver:
-    - https://223.5.5.5/dns-query
     - https://doh.pub/dns-query
-    - https://doh.360.cn/dns-query
     - https://dns.alidns.com/dns-query
   fallback:
-    - https://1.0.0.1/dns-query
-    - https://8.8.8.8/dns-query
-  proxy-server-nameserver:
-    - https://doh.pub/dns-query
+    - https://1.1.1.2/dns-query
+    - https://1.0.0.2/dns-query
+    - https://9.9.9.9/dns-query
   fallback-filter:
     geoip: true
     geoip-code: CN
-    geosite:
-      - gfw
     ipcidr:
       - 240.0.0.0/4
-    domain:
-      - '+.google.com'
-      - '+.facebook.com'
-      - '+.youtube.com'
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
 proxy-groups: ~
