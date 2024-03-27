@@ -18,11 +18,12 @@ dns:
     - https://dns.alidns.com/dns-query
     - https://doh.pub/dns-query
   fallback:
-    - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
-    - https://sky.rethinkdns.com/1:SJ8AEAYABgwgQAAEAIAgAABA
     - https://1.1.1.2/dns-query
+    - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
     - https://1.0.0.2/dns-query
     - https://9.9.9.9/dns-query
+    - https://sky.rethinkdns.com/1:SJ8AEAYABgwgQAAEAIAgAABA
+
   fallback-filter:
     geoip: true
     geoip-code: CN
