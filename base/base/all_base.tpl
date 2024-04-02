@@ -10,12 +10,8 @@ dns:
   prefer-h3: true
   listen: 0.0.0.0:53
   ipv6: true
-  enhanced-mode: redir-host
-  fake-ip-range: 28.0.0.1/8
-  fake-ip-filter:
-    - '*'
-    - '+.lan'
-    - '+.local'
+  enhanced-mode: fake-ip
+  fake-ip-filter: ['+.*']
   default-nameserver: 
     - 223.5.5.5
     - 114.114.114.114
