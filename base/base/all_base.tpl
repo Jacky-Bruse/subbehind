@@ -7,8 +7,15 @@ log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: :9090
 dns:
   enable: true
+  prefer-h3: true
   listen: 0.0.0.0:53
   ipv6: true
+  enhanced-mode: redir-host
+  fake-ip-range: 28.0.0.1/8
+  fake-ip-filter:
+    - '*'
+    - '+.lan'
+    - '+.local'
   default-nameserver: 
     - 223.5.5.5
     - 114.114.114.114
@@ -17,18 +24,16 @@ dns:
   nameserver:
     - https://dns.alidns.com/dns-query
     - https://doh.pub/dns-query
-  fallback:
-    - https://1.1.1.2/dns-query
+  proxy-server-nameserver:
+    - https://1.1.1.1/dns-query
     - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
-    - https://1.0.0.2/dns-query
-    - https://9.9.9.9/dns-query
-    - https://sky.rethinkdns.com/1:SJ8AEAYABgwgQAAEAIAgAABA
+  nameserver-policy:
+    "geosite:cn": 
+      - https://dns.alidns.com/dns-query
+      - https://doh.pub/dns-query
+	"rule-set:ads": 
+	  - rcode://refused
 
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
-    ipcidr:
-      - 240.0.0.0/4
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
 proxy-groups: ~
