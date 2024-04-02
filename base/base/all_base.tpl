@@ -24,15 +24,21 @@ dns:
   nameserver:
     - https://dns.alidns.com/dns-query
     - https://doh.pub/dns-query
-  proxy-server-nameserver:
+  fallback:
     - https://1.1.1.1/dns-query
+    - https://1.0.0.1/dns-query
     - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
+    - tls://dns.google
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    ipcidr:
+      - 240.0.0.0/4
   nameserver-policy:
     "geosite:cn": 
       - https://dns.alidns.com/dns-query
       - https://doh.pub/dns-query
-	"rule-set:ads": 
-	  - rcode://refused
+    'rule-set:ads': rcode://refused
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
