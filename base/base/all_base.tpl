@@ -34,7 +34,7 @@ dns:
     "geosite:cn": 
       - https://dns.alidns.com/dns-query
       - https://doh.pub/dns-query
-    'rule-set:ads': rcode://refused
+    'geosite,ads': rcode://refused
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
