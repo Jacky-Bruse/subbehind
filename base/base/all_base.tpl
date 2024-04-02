@@ -31,10 +31,15 @@ dns:
     ipcidr:
       - 240.0.0.0/4
   nameserver-policy:
-    "geosite:cn": 
+    "geosite:cn,private": 
       - https://dns.alidns.com/dns-query
       - https://doh.pub/dns-query
-    'geosite,ads': rcode://refused
+    "geosite:youtube,ai,telegram,proxy": 
+      - https://1.1.1.1/dns-query
+      - https://dns.google/dns-query
+      - https://1.0.0.1/dns-query
+      - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
+    'geosite:ads': rcode://refused
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
