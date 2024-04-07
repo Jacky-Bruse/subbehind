@@ -10,36 +10,24 @@ dns:
   prefer-h3: true
   listen: 0.0.0.0:53
   ipv6: true
-  enhanced-mode: fake-ip
-  fake-ip-filter: ['+.*']
-  default-nameserver: 
-    - 223.5.5.5
-    - 114.114.114.114
-    - 1.1.1.1
-    - 8.8.8.8
-  nameserver:
-    - https://dns.alidns.com/dns-query
-    - https://doh.pub/dns-query
-  fallback:
-    - https://1.1.1.1/dns-query
-    - https://1.0.0.1/dns-query
-    - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
-    - tls://dns.google
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
-    ipcidr:
-      - 240.0.0.0/4
   nameserver-policy:
-    "geosite:cn,private": 
+    geosite:cn,private:
       - https://dns.alidns.com/dns-query
       - https://doh.pub/dns-query
-    "geosite:youtube,ai,telegram,proxy": 
+    geosite:youtube,ai,telegram,proxy:
       - https://1.1.1.1/dns-query
       - https://dns.google/dns-query
       - https://1.0.0.1/dns-query
       - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
-    'geosite:ads': rcode://refused
+      - tls://dns.google
+    geosite:ads: rcode://refused
+  nameserver:
+    - https://1.1.1.1/dns-query
+    - https://doh.pub/dns-query
+    - https://dns.google/dns-query
+    - https://1.0.0.1/dns-query
+    - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
+    - tls://dns.google
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
