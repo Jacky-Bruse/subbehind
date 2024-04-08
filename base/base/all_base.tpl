@@ -11,20 +11,20 @@ dns:
   listen: 0.0.0.0:53
   ipv6: true
   nameserver-policy:
-    geosite:cn,private:
-      - https://dns.alidns.com/dns-query
+    geosite:cn,private,bilibili:
       - https://doh.pub/dns-query
+      - https://dns.alidns.com/dns-query
     geosite:youtube,ai,telegram,proxy:
-      - https://1.1.1.1/dns-query
+      - 'https://dns.cloudflare.com/dns-query#h3=true'
       - https://dns.google/dns-query
       - https://1.0.0.1/dns-query
       - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
       - tls://dns.google
     geosite:ads: rcode://refused
   nameserver:
-    - https://1.1.1.1/dns-query
-    - https://doh.pub/dns-query
+    - 'https://dns.cloudflare.com/dns-query#h3=true'
     - https://dns.google/dns-query
+    - https://doh.pub/dns-query
     - https://1.0.0.1/dns-query
     - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
     - tls://dns.google
