@@ -8,26 +8,48 @@ external-controller: :9090
 dns:
   enable: true
   prefer-h3: true
-  listen: 0.0.0.0:53
+  listen: 0.0.0.0:1053
   ipv6: true
-  nameserver-policy:
-    geosite:cn,private,bilibili:
-      - https://doh.pub/dns-query
-      - https://dns.alidns.com/dns-query
-    geosite:youtube,ai,telegram,proxy:
-      - 'https://dns.cloudflare.com/dns-query#h3=true'
-      - https://dns.google/dns-query
-      - https://1.0.0.1/dns-query
-      - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
-      - tls://dns.google
-    geosite:ads: rcode://refused
+  default-nameserver:
+    - 1.1.1.1
+    - 8.8.8.8
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter:
+    - '*.lan'
+    - localhost.ptlogin2.qq.com
+nameserver-policy:
+  '+.internal.crop.com': '10.0.0.1'
+  'geosite:geolocation-!cn': [https://1.1.1.1/dns-query, https://1.0.0.1/dns-query]
+  'www.baidu.com': https://doh.pub/dns-query
+  'geosite:cn,private': https://dns.alidns.com/dns-query
+  'geosite:proxy,youtube,ai,appletv': https://1.1.1.2/dns-query
   nameserver:
-    - 'https://dns.cloudflare.com/dns-query#h3=true'
-    - https://dns.google/dns-query
     - https://doh.pub/dns-query
-    - https://1.0.0.1/dns-query
+    - https://dns.alidns.com/dns-query
+  fallback:
+    - https://1.1.1.2/dns-query
+    - https://1.0.0.2/dns-query
+    - https://9.9.9.9/dns-query
     - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
-    - tls://dns.google
+  proxy-server-nameserver:
+    - https://doh.pub/dns-query
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    geosite:
+      - gfw
+      - proxy
+      - youtube
+      - ai
+      - appletv
+    ipcidr:
+      - 240.0.0.0/4
+    domain:
+      - '+.google.com'
+      - '+.facebook.com'
+      - '+.youtube.com'
+      - '+.github.com'
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
