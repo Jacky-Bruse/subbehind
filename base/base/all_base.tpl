@@ -2,54 +2,291 @@
 port: {{ default(global.clash.http_port, "7890") }}
 socks-port: {{ default(global.clash.socks_port, "7891") }}
 allow-lan: {{ default(global.clash.allow_lan, "true") }}
-mode: Rule
+mode: rule
 log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: :9090
+unified-delay: false
+tcp-concurrent: true
+find-process-mode: strict
+global-client-fingerprint: chrome
+
+sniffer:
+  enable: true
+  parse-pure-ip: true
+  sniff: {HTTP: {ports: [80, 8080-8880]}, TLS: {ports: [443, 8443]}, QUIC: {ports: [443, 8443]}}
+  skip-domain: ['Mijia Cloud']
+
 dns:
   enable: true
   prefer-h3: true
-  listen: 0.0.0.0:1053
   ipv6: true
-  default-nameserver:
-    - 1.1.1.1
-    - 8.8.8.8
-  enhanced-mode: fake-ip
+  listen: 0.0.0.0:1053
   fake-ip-range: 198.18.0.1/16
+  enhanced-mode: fake-ip
   fake-ip-filter:
+    - '*'
     - '*.lan'
-    - localhost.ptlogin2.qq.com
-nameserver-policy:
-  '+.internal.crop.com': '10.0.0.1'
-  'geosite:geolocation-!cn': [https://1.1.1.1/dns-query, https://1.0.0.1/dns-query]
-  'www.baidu.com': https://doh.pub/dns-query
-  'geosite:cn,private': https://dns.alidns.com/dns-query
-  'geosite:proxy,youtube,ai,appletv': https://1.1.1.2/dns-query
+    - '*.localdomain'
+    - '*.example'
+    - '*.invalid'
+    - '*.localhost'
+    - '*.test'
+    - '*.local'
+    - '*.home.arpa'
+    - 'time.*.com'
+    - 'time.*.gov'
+    - 'time.*.edu.cn'
+    - 'time.*.apple.com'
+    - 'time-ios.apple.com'
+    - 'time1.*.com'
+    - 'time2.*.com'
+    - 'time3.*.com'
+    - 'time4.*.com'
+    - 'time5.*.com'
+    - 'time6.*.com'
+    - 'time7.*.com'
+    - 'ntp.*.com'
+    - 'ntp1.*.com'
+    - 'ntp2.*.com'
+    - 'ntp3.*.com'
+    - 'ntp4.*.com'
+    - 'ntp5.*.com'
+    - 'ntp6.*.com'
+    - 'ntp7.*.com'
+    - '*.time.edu.cn'
+    - '*.ntp.org.cn'
+    - '+.pool.ntp.org'
+    - 'time1.cloud.tencent.com'
+    - 'music.163.com'
+    - '*.music.163.com'
+    - '*.126.net'
+    - 'musicapi.taihe.com'
+    - 'music.taihe.com'
+    - 'songsearch.kugou.com'
+    - 'trackercdn.kugou.com'
+    - '*.kuwo.cn'
+    - 'api-jooxtt.sanook.com'
+    - 'api.joox.com'
+    - 'joox.com'
+    - 'y.qq.com'
+    - '*.y.qq.com'
+    - 'streamoc.music.tc.qq.com'
+    - 'mobileoc.music.tc.qq.com'
+    - 'isure.stream.qqmusic.qq.com'
+    - 'dl.stream.qqmusic.qq.com'
+    - 'aqqmusic.tc.qq.com'
+    - 'amobile.music.tc.qq.com'
+    - '*.xiami.com'
+    - '*.music.migu.cn'
+    - 'music.migu.cn'
+    - '+.msftconnecttest.com'
+    - '+.msftncsi.com'
+    - 'localhost.ptlogin2.qq.com'
+    - 'localhost.sec.qq.com'
+    - '+.qq.com'
+    - '+.tencent.com'
+    - '+.srv.nintendo.net'
+    - '*.n.n.srv.nintendo.net'
+    - '+.cdn.nintendo.net'
+    - '+.stun.playstation.net'
+    - 'xbox.*.*.microsoft.com'
+    - '*.*.xboxlive.com'
+    - 'xbox.*.microsoft.com'
+    - 'xnotify.xboxlive.com'
+    - '+.battlenet.com.cn'
+    - '+.wotgame.cn'
+    - '+.wggames.cn'
+    - '+.wowsgame.cn'
+    - '+.wargaming.net'
+    - 'proxy.golang.org'
+    - 'stun.*.*'
+    - 'stun.*.*.*'
+    - '+.stun.*.*'
+    - '+.stun.*.*.*'
+    - '+.stun.*.*.*.*'
+    - '+.stun.*.*.*.*.*'
+    - 'heartbeat.belkin.com'
+    - '*.linksys.com'
+    - '*.linksyssmartwifi.com'
+    - '*.router.asus.com'
+    - 'mesu.apple.com'
+    - 'swscan.apple.com'
+    - 'swquery.apple.com'
+    - 'swdownload.apple.com'
+    - 'swcdn.apple.com'
+    - 'swdist.apple.com'
+    - 'lens.l.google.com'
+    - 'stun.l.google.com'
+    - 'na.b.g-tun.com'
+    - '+.nflxvideo.net'
+    - '*.square-enix.com'
+    - '*.finalfantasyxiv.com'
+    - '*.ffxiv.com'
+    - '*.ff14.sdo.com'
+    - 'ff.dorado.sdo.com'
+    - '*.mcdn.bilivideo.cn'
+    - '+.media.dssott.com'
+    - 'shark007.net'
+    - 'Mijia Cloud'
+    - '+.cmbchina.com'
+    - '+.cmbimg.com'
+    - 'adguardteam.github.io'
+    - 'adrules.top'
+    - 'anti-ad.net'
+    - 'local.adguard.org'
+    - 'static.adtidy.org'
+    - '+.sandai.net'
+    - '+.n0808.com'
+    - '+.3gppnetwork.org'
+    - '+.uu.163.com'
+    - 'ps.res.netease.com'
+    - 1337.abcvg.info
+    - aboutbeautifulgallopinghorsesinthegreenpasture.online
+    - bt.okmp3.ru
+    - bvarf.tracker.sh
+    - ipv6.rer.lol
+    - nyaa.tracker.wf
+    - open.acgnxtracker.com
+    - retracker.hotplug.ru
+    - t.acg.rip
+    - t1.aag.moe
+    - tk.greedland.net
+    - torrentsmd.com
+    - tracker.bt4g.com
+    - tracker.dler.com
+    - tracker.dler.org
+    - tracker.edkj.club
+    - tracker.electro-torrent.pl
+    - tracker.files.fm
+    - tracker.gbitt.info
+    - tracker.ipv6tracker.org
+    - tracker.ipv6tracker.ru
+    - tracker.k.vu
+    - tracker.mywaifu.best
+    - tracker.opentrackr.org
+    - tracker.qu.ax
+    - tracker.renfei.net
+    - tracker2.dler.org
+    - tracker2.itzmx.com
+    - tracker4.itzmx.com
+    - www.all4nothin.net
+    - www.peckservers.com
+    - www.wareztorrent.com
+    - 1337.abcvg.info
+    - t.peer-exchange.download
+    - t1.hloli.org
+    - tr.burnabyhighstar.com
+    - tr.qfruiti.com
+    - track3r.site
+    - tracker.cloudit.top
+    - tracker.gbitt.info
+    - tracker.gcrreen.xyz
+    - tracker.imgoingto.icu
+    - tracker.ipfsscan.io
+    - tracker.kuroy.me
+    - tracker.lilithraws.org
+    - tracker.loligirl.cn
+    - tracker.renfei.net
+    - tracker.tamersunion.org
+    - tracker.yemekyedim.com
+    - tracker1.520.jp
+    - trackers.mlsub.net
+    - trackers.ptlsp.com
+    - www.peckservers.com
+    - 1c.premierzal.ru
+    - 6ahddutb1ucc3cp.ru
+    - aegir.sexy
+    - amigacity.xyz
+    - black-bird.ynh.fr
+    - bt.ktrackers.com
+    - bt1.archive.org
+    - bt2.archive.org
+    - bubu.mapfactor.com
+    - concen.org
+    - d40969.acod.regrucolo.ru
+    - ec2-18-191-163-220.us-east-2.compute.amazonaws.com
+    - epider.me
+    - evan.im
+    - exodus.desync.com
+    - fh2.cmp-gaming.com
+    - free.publictracker.xyz
+    - ipv4.rer.lol
+    - ipv6.fuuuuuck.com
+    - isk.richardsw.club
+    - jutone.com
+    - martin-gebhardt.eu
+    - moonburrow.club
+    - movies.zsw.ca
+    - odd-hd.fr
+    - oh.fuuuuuck.com
+    - open.demonii.com
+    - open.demonoid.ch
+    - open.free-tracker.ga
+    - open.stealth.si
+    - open.tracker.ink
+    - open.xxtor.com
+    - opentor.org
+    - p2p.publictracker.xyz
+    - p4p.arenabg.com
+    - public.demonoid.ch
+    - public.publictracker.xyz
+    - public.tracker.vraphim.com
+    - retracker.hotplug.ru
+    - retracker.lanta.me
+    - retracker01-msk-virt.corbina.net
+    - run-2.publictracker.xyz
+    - run.publictracker.xyz
+    - ryjer.com
+    - su-data.com
+    - tamas3.ynh.fr
+    - tk1.trackerservers.com
+    - torrents.artixlinux.org
+    - tracker-udp.gbitt.info
+    - tracker.0x7c0.com
+    - tracker.anima.nz
+    - tracker.bittor.pw
+    - tracker.ccp.ovh
+    - tracker.cyberia.is
+    - tracker.darkness.services
+    - tracker.ddunlimited.net
+    - tracker.dler.com
+    - tracker.dler.org
+    - tracker.dump.cl
+    - tracker.edkj.club
+    - tracker.farted.net
+    - tracker.filemail.com
+    - tracker.fnix.net
+    - tracker.jamesthebard.net
+    - tracker.moeking.me
+    - tracker.opentrackr.org
+    - tracker.picotorrent.one
+    - tracker.publictracker.xyz
+    - tracker.qu.ax
+    - tracker.skyts.net
+    - tracker.srv00.com
+    - tracker.t-rb.org
+    - tracker.therarbg.com
+    - tracker.therarbg.to
+    - tracker.tiny-vps.com
+    - tracker.torrent.eu.org
+    - tracker.torrust-demo.com
+    - tracker.tryhackx.org
+    - tracker.vds.nz
+    - tracker1.bt.moack.co.kr
+    - tracker2.dler.com
+    - tracker2.dler.org
+    - tracker2.itzmx.com
+    - tracker3.itzmx.com
+    - ttk2.nbaonlineservice.com
+    - u.peer-exchange.download
+    - u4.trakx.crim.ist
+    - u6.trakx.crim.ist
+    - wepzone.net
+    - www.torrent.eu.org
+    - tracker.openwebtorrent.com
   nameserver:
-    - https://doh.pub/dns-query
-    - https://dns.alidns.com/dns-query
-  fallback:
-    - https://1.1.1.2/dns-query
-    - https://1.0.0.2/dns-query
-    - https://9.9.9.9/dns-query
-    - https://doh.xixi.day/1:-If-BwMAIgEsgMAAVDAgAACBAAg=
-  proxy-server-nameserver:
-    - https://doh.pub/dns-query
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
-    geosite:
-      - gfw
-      - proxy
-      - youtube
-      - ai
-      - appletv
-    ipcidr:
-      - 240.0.0.0/4
-    domain:
-      - '+.google.com'
-      - '+.facebook.com'
-      - '+.youtube.com'
-      - '+.github.com'
+    - 'https://223.5.5.5/dns-query#h3=true'
+    - https://1.12.12.12/dns-query
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
