@@ -285,11 +285,14 @@ dns:
     - www.torrent.eu.org
     - tracker.openwebtorrent.com
   nameserver:
+    - 61.177.7.1
+    - 218.2.135.1.1
     - 'https://223.5.5.5/dns-query#h3=true'
     - https://1.12.12.12/dns-query
   fallback:
     - https://cloudflare-dns.com/dns-query
     - https://dns.google/dns-query
+    - tls://dns.rubyfish.cn:853
   proxy-server-nameserver:
     - https://doh.pub/dns-query
   fallback-filter:
