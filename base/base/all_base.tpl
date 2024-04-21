@@ -293,6 +293,7 @@ dns:
     - https://cloudflare-dns.com/dns-query
     - https://dns.google/dns-query
     - tls://dns.rubyfish.cn:853
+    - tls://dns.google:853
   proxy-server-nameserver:
     - https://doh.pub/dns-query
   fallback-filter:
