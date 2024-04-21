@@ -287,6 +287,23 @@ dns:
   nameserver:
     - 'https://223.5.5.5/dns-query#h3=true'
     - https://1.12.12.12/dns-query
+  fallback:
+    - https://cloudflare-dns.com/dns-query
+    - https://dns.google/dns-query
+  proxy-server-nameserver:
+    - https://doh.pub/dns-query
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    geosite:
+      - proxy
+    ipcidr:
+      - 240.0.0.0/4
+    domain:
+      - '+.google.com'
+      - '+.facebook.com'
+      - '+.youtube.com'
+      - '+.github.com'
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
