@@ -301,7 +301,6 @@ dns:
     geoip-code: CN
     geosite:
       - proxy
-      - youtube
     ipcidr:
       - 240.0.0.0/4
     domain:
