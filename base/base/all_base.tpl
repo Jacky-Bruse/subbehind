@@ -27,10 +27,10 @@ dns:
   nameserver:
     - 61.177.7.1
     - 218.2.135.1.1
-    - https://223.5.5.5/dns-query#h3=true
+    - 'https://dns.alidns.com/dns-query#h3=true'
     - https://1.12.12.12/dns-query
   fallback:
-    - https://cloudflare-dns.com/dns-query#h3=true
+    - 'https://cloudflare-dns.com/dns-query#h3=true'
     - https://dns.google/dns-query
     - tls://dns.rubyfish.cn:853
     - tls://dns.google:853
@@ -49,10 +49,8 @@ dns:
       - +.youtube.com
       - +.github.com
   nameserver-policy:
-    '+.internal.crop.com': 
-      - 10.0.0.1
-    'geosite:cn,private': ['https://dns.alidns.com/dns-query#h3=true', '61.177.7.1', '218.2.135.1.1']
-    'geosite:proxy': ['https://1.1.1.1/dns-query#h3=true', 'https://8.8.8.8/dns-query']
+    'geosite:cn,private': ['https://dns.alidns.com/dns-query#h3=true', 61.177.7.1, 218.2.135.1.1, https://doh.pub/dns-query]
+    'geosite:proxy': ['https://1.1.1.1/dns-query#h3=true', https://8.8.8.8/dns-query]
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
