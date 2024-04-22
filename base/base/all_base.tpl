@@ -52,7 +52,7 @@ dns:
     '+.internal.crop.com': 
       - 10.0.0.1
     'geosite:cn,private': ['https://dns.alidns.com/dns-query#h3=true', '61.177.7.1', '218.2.135.1.1']
-    'geosite:proxy': ['https://1.1.1.1/dns-query#h3=true'', 'https://8.8.8.8/dns-query']
+    'geosite:proxy': ['https://1.1.1.1/dns-query#h3=true', 'https://8.8.8.8/dns-query']
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
