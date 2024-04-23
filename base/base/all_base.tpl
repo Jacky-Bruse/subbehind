@@ -40,7 +40,7 @@ dns:
     geoip: true
     geoip-code: CN
     geosite:
-      - proxy
+      - gfw
     ipcidr:
       - 240.0.0.0/4
     domain:
@@ -49,8 +49,8 @@ dns:
       - +.youtube.com
       - +.github.com
   nameserver-policy:
-    'geosite:cn,private': ['https://dns.alidns.com/dns-query#h3=true', 61.177.7.1, 218.2.135.1.1, https://doh.pub/dns-query]
-    'geosite:proxy': ['https://1.1.1.1/dns-query#h3=true', https://8.8.8.8/dns-query]
+    'geosite:cn': ['https://dns.alidns.com/dns-query#h3=true', 61.177.7.1, 218.2.135.1.1, https://doh.pub/dns-query]
+    'geosite:gfw': ['https://1.1.1.1/dns-query#h3=true', https://8.8.8.8/dns-query]
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
