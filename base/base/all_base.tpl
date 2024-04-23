@@ -19,38 +19,18 @@ sniffer:
 dns:
   enable: true
   prefer-h3: true
-  ipv6: false
+  ipv6: true
   listen: 0.0.0.0:1053
   fake-ip-range: 198.18.0.1/16
   enhanced-mode: fake-ip
   fake-ip-filter: ['+.*']
   nameserver:
-    - 61.177.7.1
-    - 218.2.135.1.1
-    - 'https://dns.alidns.com/dns-query#h3=true'
+    - 'https://223.5.5.5/dns-query#h3=true'
     - https://1.12.12.12/dns-query
-  fallback:
-    - 'https://cloudflare-dns.com/dns-query#h3=true'
-    - https://dns.google/dns-query
-    - tls://dns.rubyfish.cn:853
-    - tls://dns.google:853
-  proxy-server-nameserver:
-    - https://doh.pub/dns-query
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
-    geosite:
-      - gfw
-    ipcidr:
-      - 240.0.0.0/4
-    domain:
-      - +.google.com
-      - +.facebook.com
-      - +.youtube.com
-      - +.github.com
   nameserver-policy:
-    'geosite:cn,private': ['https://dns.alidns.com/dns-query#h3=true', 61.177.7.1, 218.2.135.1.1, https://doh.pub/dns-query]
-    'geosite:gfw': ['https://1.1.1.1/dns-query#h3=true', https://8.8.8.8/dns-query]
+    'geosite:category-ads-all': rcode://refused
+    'geosite:microsoft@cn,apple-cn,google-cn,category-games@cn,cn,private': ['https://223.5.5.5/dns-query#h3=true', https://1.12.12.12/dns-query]
+    'geosite:geolocation-!cn,gfw': ['https://1.1.1.1/dns-query#Proxies&h3=true', 'https://8.8.8.8/dns-query#Proxies']
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
