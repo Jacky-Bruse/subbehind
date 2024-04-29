@@ -10,6 +10,16 @@ tcp-concurrent: true
 find-process-mode: strict
 global-client-fingerprint: chrome
 
+#  TCP keep alive interval
+keep-alive-interval: 15
+#自定义 geodata url
+geox-url:
+  geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
+  geosite: "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
+  mmdb: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb"
+geo-auto-update: true  # 是否自动更新 geodata
+geo-update-interval: 24 # 更新间隔，单位：小时
+
 sniffer:
   enable: true
   parse-pure-ip: true
