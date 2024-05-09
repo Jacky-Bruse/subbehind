@@ -13,6 +13,7 @@ global-client-fingerprint: chrome
 #  TCP keep alive interval
 keep-alive-interval: 15
 #自定义 geodata url
+geodata-mode: true
 geox-url:
   geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
   geosite: "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
