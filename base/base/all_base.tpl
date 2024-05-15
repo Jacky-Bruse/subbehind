@@ -5,23 +5,20 @@ allow-lan: {{ default(global.clash.allow_lan, "true") }}
 mode: rule
 log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: :9090
-find-process-mode: strict # 进程匹配模式：always 开启，强制匹配所有进程；；strict 默认，由 Clash 判断是否开启；off 不匹配进程，推荐在路由器上使用此模式
-global-ua: clash.meta # 自定义外部资源下载时使用的UA,默认为 clash.meta
-bind-address: "*" # 绑定 IP, 通过 LAN 访问一个/一些特定的 IP 地址，"*" 绑定所有 IP 地址，默认值，不填写此项则绑定全部
-ipv6: false
+unified-delay: false
 tcp-concurrent: true
-keep-alive-interval: 30
-unified-delay: true
+find-process-mode: strict
 global-client-fingerprint: chrome
+#  TCP keep alive interval
+keep-alive-interval: 15
+#自定义 geodata url
 geodata-mode: true
 geox-url:
-  geoip: https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat
-  geosite: https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat
-  mmdb: https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb
-geo-auto-update: true
-geo-update-interval: 24
-profile:
-  store-selected: false
+  geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
+  geosite: "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
+  mmdb: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb"
+geo-auto-update: true  # 是否自动更新 geodata
+geo-update-interval: 24 # 更新间隔，单位：小时
 sniffer:
   enable: true
   parse-pure-ip: true
@@ -34,16 +31,17 @@ dns:
   listen: 0.0.0.0:1053
   fake-ip-range: 198.18.0.1/16
   enhanced-mode: fake-ip
-  fake-ip-filter: [+.*]
+  fake-ip-filter: ['+.*']
   nameserver:
-    - https://1.1.1.1/dns-query#h3=true
+    - 'https://1.1.1.1/dns-query#h3=true'
     - https://dns.google/dns-query
     - https://dns.adguard.com/dns-query
-    - https://223.5.5.5/dns-query#h3=true
+    - 'https://223.5.5.5/dns-query#h3=true'
   nameserver-policy:
-    geosite:category-ads-all: rcode://refused
-    geosite:geolocation-cn,microsoft@cn,apple-cn,google-cn,category-games@cn,cn,private: [https://223.5.5.5/dns-query#h3=true, https://1.12.12.12/dns-query]
-    geosite:geolocation-!cn,gfw,youtube,github: [https://1.1.1.1/dns-query#Global&h3=true, https://8.8.8.8/dns-query#Global]
+    'geosite:category-ads-all': rcode://refused
+    'geosite:geolocation-cn,microsoft@cn,apple-cn,google-cn,category-games@cn,cn,private': ['https://223.5.5.5/dns-query#h3=true', https://1.12.12.12/dns-query]
+    'geosite:geolocation-!cn,gfw,youtube': ['https://1.1.1.1/dns-query#Global&h3=true', 'https://8.8.8.8/dns-query#Global']
+
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
 proxy-groups: ~
@@ -53,8 +51,8 @@ Proxy: ~
 Proxy Group: ~
 Rule: ~
 {% endif %}
-
 {% endif %}
+
 {% if request.target == "surge" %}
 
 [General]
@@ -311,7 +309,7 @@ enhanced-mode-by-rule = true
         "servers": [
             {
                 "tag": "dns_proxy",
-                "address": "https://1.0.0.1/dns-query",
+                "address": "tls://1.1.1.1",
                 "address_resolver": "dns_resolver"
             },
             {
