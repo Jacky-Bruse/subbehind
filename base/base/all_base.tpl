@@ -24,7 +24,7 @@ geox-url:
 geo-auto-update: true  # 是否自动更新 geodata
 geo-update-interval: 24 # 更新间隔，单位：小时
 geosite-matcher: succinct # GeoSite 使用的匹配器实现，可选：succinct：与规则集相同；mph：来自 V2Ray，也是 Xray 中的“混合”
-geodata-loader: standard # GEO 文件加载模式：standard：标准加载器；memconservative：专为内存受限(小内存)设备优化的加载器(默认值)
+geodata-loader: memconservative # GEO 文件加载模式：standard：标准加载器；memconservative：专为内存受限(小内存)设备优化的加载器(默认值)
 
 sniffer:
   enable: true
