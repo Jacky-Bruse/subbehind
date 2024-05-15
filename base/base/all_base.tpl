@@ -26,10 +26,6 @@ geo-update-interval: 24 # 更新间隔，单位：小时
 geosite-matcher: succinct # GeoSite 使用的匹配器实现，可选：succinct：与规则集相同；mph：来自 V2Ray，也是 Xray 中的“混合”
 geodata-loader: standard # GEO 文件加载模式：standard：标准加载器；memconservative：专为内存受限(小内存)设备优化的加载器(默认值)
 
-profile: # 缓存
-  store-selected: true # 储存 API 对策略组的选择，以供下次启动时使用
-  store-fake-ip: true # 储存 fakeip 映射表，域名再次发生连接时，使用原有映射地址
-
 sniffer: # 域名嗅器,通过读取握手包内的域名字段,将IP还原成域名,有效解决Mapping机制的短板
   enable: true
   force-dns-mapping: true # 对 redir-host 类型识别的流量进行强制嗅探
