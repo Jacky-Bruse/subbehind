@@ -8,9 +8,9 @@ external-controller: :9090
 find-process-mode: strict # 进程匹配模式：always 开启，强制匹配所有进程；；strict 默认，由 Clash 判断是否开启；off 不匹配进程，推荐在路由器上使用此模式
 global-ua: clash.meta # 自定义外部资源下载时使用的UA,默认为 clash.meta
 bind-address: "*" # 绑定 IP, 通过 LAN 访问一个/一些特定的 IP 地址，"*" 绑定所有 IP 地址，默认值，不填写此项则绑定全部
-ipv6: true # 是否允许内核接受 IPv6 流量，可选值 true/false
+ipv6: false # 是否允许内核接受 IPv6 流量，可选值 true/false
 tcp-concurrent: true # tcp并发，允许同时处理多个tcp连接，可选值 true/false
-keep-alive-interval: 30 # TCP Keep Alive 间隔,单位分钟 | 控制 Clash 发出 TCP Keep Alive 包的间隔,减少移动设备耗电问题的临时措施
+keep-alive-interval: 15 # TCP Keep Alive 间隔,单位分钟 | 控制 Clash 发出 TCP Keep Alive 包的间隔,减少移动设备耗电问题的临时措施
 unified-delay: true # 统一延迟，更换延迟计算方式,去除握手等额外延迟 可选值 true/false
 global-client-fingerprint: chrome  # 全局客户端指纹，可选："chrome", "firefox", "safari", "iOS", "android", "edge", "360"," qq", "random"；若选择 "random", 则按 Cloudflare Radar 数据按概率生成一个现代浏览器指纹。
 
@@ -26,23 +26,11 @@ geo-update-interval: 24 # 更新间隔，单位：小时
 geosite-matcher: succinct # GeoSite 使用的匹配器实现，可选：succinct：与规则集相同；mph：来自 V2Ray，也是 Xray 中的“混合”
 geodata-loader: standard # GEO 文件加载模式：standard：标准加载器；memconservative：专为内存受限(小内存)设备优化的加载器(默认值)
 
-sniffer: # 域名嗅器,通过读取握手包内的域名字段,将IP还原成域名,有效解决Mapping机制的短板
+sniffer:
   enable: true
-  force-dns-mapping: true # 对 redir-host 类型识别的流量进行强制嗅探
-  parse-pure-ip: true # 对所有未获取到域名的流量进行强制嗅探
-  override-destination: true # 是否使用嗅探结果作为实际访问,默认为 true
-  sniff:
-    HTTP:
-      ports: [80, 8080-8880]
-      override-destination: true # 可覆盖 sniffer.override-destination
-    TLS:
-      ports: [443, 8443]
-    QUIC:
-      ports: [443, 8443]
-  force-domain: # 需要强制嗅探的域名（默认情况下只对IP进行嗅探）
-    - "+.v2ex.com"
-  skip-domain: # 需要跳过嗅探的域名。主要解决部分站点sni字段非域名，导致嗅探结果异常的问题，如米家设备
-    - "Mijia Cloud"
+  parse-pure-ip: true
+  sniff: {HTTP: {ports: [80, 8080-8880]}, TLS: {ports: [443, 8443]}, QUIC: {ports: [443, 8443]}}
+  skip-domain: ['Mijia Cloud']
 
 dns:
   enable: true
