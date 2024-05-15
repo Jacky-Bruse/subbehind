@@ -8,30 +8,25 @@ external-controller: :9090
 find-process-mode: strict # 进程匹配模式：always 开启，强制匹配所有进程；；strict 默认，由 Clash 判断是否开启；off 不匹配进程，推荐在路由器上使用此模式
 global-ua: clash.meta # 自定义外部资源下载时使用的UA,默认为 clash.meta
 bind-address: "*" # 绑定 IP, 通过 LAN 访问一个/一些特定的 IP 地址，"*" 绑定所有 IP 地址，默认值，不填写此项则绑定全部
-ipv6: false # 是否允许内核接受 IPv6 流量，可选值 true/false
-tcp-concurrent: true # tcp并发，允许同时处理多个tcp连接，可选值 true/false
-keep-alive-interval: 15 # TCP Keep Alive 间隔,单位分钟 | 控制 Clash 发出 TCP Keep Alive 包的间隔,减少移动设备耗电问题的临时措施
-unified-delay: true # 统一延迟，更换延迟计算方式,去除握手等额外延迟 可选值 true/false
-global-client-fingerprint: chrome  # 全局客户端指纹，可选："chrome", "firefox", "safari", "iOS", "android", "edge", "360"," qq", "random"；若选择 "random", 则按 Cloudflare Radar 数据按概率生成一个现代浏览器指纹。
-
-#自定义 geodata url
+ipv6: false
+tcp-concurrent: true
+keep-alive-interval: 30
+unified-delay: true
+global-client-fingerprint: chrome
 geodata-mode: true
 geox-url:
-  geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
-  geosite: "https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat"
-  mmdb: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb"
-  asn: "https://github.com/xishang0128/geoip/releases/download/latest/GeoLite2-ASN.mmdb"
-geo-auto-update: true  # 是否自动更新 geodata
-geo-update-interval: 24 # 更新间隔，单位：小时
-geosite-matcher: succinct # GeoSite 使用的匹配器实现，可选：succinct：与规则集相同；mph：来自 V2Ray，也是 Xray 中的“混合”
-geodata-loader: memconservative # GEO 文件加载模式：standard：标准加载器；memconservative：专为内存受限(小内存)设备优化的加载器(默认值)
-
+  geoip: https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat
+  geosite: https://cdn.jsdelivr.net/gh/Loyalsoldier/v2ray-rules-dat@release/geosite.dat
+  mmdb: https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb
+geo-auto-update: true
+geo-update-interval: 24
+profile:
+  store-selected: false
 sniffer:
   enable: true
   parse-pure-ip: true
   sniff: {HTTP: {ports: [80, 8080-8880]}, TLS: {ports: [443, 8443]}, QUIC: {ports: [443, 8443]}}
   skip-domain: ['Mijia Cloud']
-
 dns:
   enable: true
   prefer-h3: true
@@ -39,17 +34,16 @@ dns:
   listen: 0.0.0.0:1053
   fake-ip-range: 198.18.0.1/16
   enhanced-mode: fake-ip
-  fake-ip-filter: ['+.*']
+  fake-ip-filter: [+.*]
   nameserver:
-    - 'https://1.1.1.1/dns-query#h3=true'
+    - https://1.1.1.1/dns-query#h3=true
     - https://dns.google/dns-query
     - https://dns.adguard.com/dns-query
-    - 'https://223.5.5.5/dns-query#h3=true'
+    - https://223.5.5.5/dns-query#h3=true
   nameserver-policy:
-    'geosite:category-ads-all': rcode://refused
-    'geosite:geolocation-cn,microsoft@cn,apple-cn,google-cn,category-games@cn,cn,private': ['https://223.5.5.5/dns-query#h3=true', https://1.12.12.12/dns-query]
-    'geosite:geolocation-!cn,gfw,youtube,github': ['https://1.1.1.1/dns-query#Global&h3=true', 'https://8.8.8.8/dns-query#Global']
-
+    geosite:category-ads-all: rcode://refused
+    geosite:geolocation-cn,microsoft@cn,apple-cn,google-cn,category-games@cn,cn,private: [https://223.5.5.5/dns-query#h3=true, https://1.12.12.12/dns-query]
+    geosite:geolocation-!cn,gfw,youtube,github: [https://1.1.1.1/dns-query#Global&h3=true, https://8.8.8.8/dns-query#Global]
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
 proxy-groups: ~
