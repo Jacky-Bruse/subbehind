@@ -40,7 +40,7 @@ dns:
   nameserver-policy:
     'geosite:category-ads-all': rcode://refused
     'geosite:geolocation-cn,microsoft@cn,apple-cn,google-cn,category-games@cn,cn,private': ['https://223.5.5.5/dns-query#h3=true', https://1.12.12.12/dns-query]
-    'geosite:geolocation-!cn,gfw,youtube': ['https://1.1.1.1/dns-query#Global&h3=true', 'https://8.8.8.8/dns-query#Global']
+    'geosite:geolocation-!cn,gfw,youtube': ['https://1.1.1.1/dns-query#DNS&h3=true', 'https://8.8.8.8/dns-query#DNS']
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
