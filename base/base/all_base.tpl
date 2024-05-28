@@ -33,6 +33,8 @@ dns:
   enhanced-mode: fake-ip
   fake-ip-filter: ['+.*']
   nameserver:
+    - 'tls://8.8.4.4#DNS'
+    - 'tls://1.0.0.1#DNS'
     - 'https://1.1.1.1/dns-query#h3=true'
     - https://8.8.8.8/dns-query
     - https://dns.adguard.com/dns-query
@@ -41,6 +43,7 @@ dns:
     "geosite:cn,private,geolocation-cn,microsoft@cn,apple-cn,google-cn,category-games@cn":
       - 'https://223.5.5.5/dns-query#h3=true'
       - 'https://1.12.12.12/dns-query'
+      - 'https://doh.pub/dns-query'
     "geosite:geolocation-!cn,gfw,youtube": 
       - 'https://1.1.1.1/dns-query#DNS&h3=true'
       - 'https://8.8.8.8/dns-query#DNS'
