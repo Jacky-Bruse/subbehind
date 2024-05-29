@@ -44,6 +44,7 @@ dns:
       - 'https://doh.pub/dns-query'
     "geosite:geolocation-!cn,gfw,youtube": 
       - 'https://1.1.1.1/dns-query#DNS&h3=true'
+      - 'tls://8.8.4.4:853#DNS'
       - 'https://8.8.8.8/dns-query#DNS'
 
 {% if local.clash.new_field_name == "true" %}
