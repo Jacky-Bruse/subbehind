@@ -18,7 +18,7 @@ geox-url:
   geosite: "https://cdn.jsdelivr.net/gh/Jacky-Bruse/v2ray-rules-dat@release/geosite.dat"
   mmdb: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb"
 geo-auto-update: true  # 是否自动更新 geodata
-geo-update-interval: 24 # 更新间隔，单位：小时
+geo-update-interval: 48 # 更新间隔，单位：小时
 sniffer:
   enable: true
   parse-pure-ip: true
@@ -28,15 +28,13 @@ dns:
   enable: true
   prefer-h3: true
   ipv6: false
-  listen: 0.0.0.0:1053
+  listen: 0.0.0.0:7874
   fake-ip-range: 198.18.0.1/16
   enhanced-mode: fake-ip
   fake-ip-filter: ['+.*']
   nameserver:
-    - 'tls://8.8.4.4#DNS'
-    - 'tls://1.0.0.1#DNS'
     - 'https://1.1.1.1/dns-query#h3=true'
-    - https://8.8.8.8/dns-query
+    - 'tls://8.8.4.4:853#DNS'
     - https://dns.adguard.com/dns-query
     - 'https://223.5.5.5/dns-query#h3=true'
   nameserver-policy:
