@@ -45,7 +45,7 @@ RUN set -xe && \
     make -j $THREADS
 
 # build final image
-FROM alpine:3.16
+FROM alpine:3.20
 LABEL maintainer="tindy.it@gmail.com"
 
 RUN apk add --no-cache --virtual subconverter-deps pcre2 libcurl yaml-cpp
