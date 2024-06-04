@@ -1,5 +1,5 @@
 name: Publish Docker Image1
-on:
+on: 
   push:
     branches: [ master ]
 
