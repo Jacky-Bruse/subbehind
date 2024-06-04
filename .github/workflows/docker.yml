@@ -8,7 +8,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  REGISTRY_IMAGE: asdlokj1qpi23/subconverter
+  REGISTRY_IMAGE: leejacky/subbehind
 
 jobs:
   build:
