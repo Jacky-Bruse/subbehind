@@ -35,7 +35,7 @@ jobs:
       - name: Build and export
         id: build
         if: github.ref == 'refs/heads/master'
-        uses: docker/build-push-action@v5.3.0
+        uses: docker/build-push-action@v3
         with:
           platforms: linux/amd64
           context: scripts/
@@ -99,7 +99,6 @@ jobs:
           config-inline: |
             [worker.oci]
               max-parallelism = 1
-
       - name: Download artifact
         uses: actions/download-artifact@v3
         with:
