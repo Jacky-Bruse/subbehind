@@ -16,7 +16,7 @@ geodata-mode: true
 geox-url:
   geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
   geosite: "https://cdn.jsdelivr.net/gh/Jacky-Bruse/v2ray-rules-dat@release/geosite.dat"
-  mmdb: "https://cdn.jsdelivr.net/gh/Hackl0us/GeoIP2-CN@release/Country.mmdb"
+  mmdb: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.metadb"
 geo-auto-update: true  # 是否自动更新 geodata
 geo-update-interval: 48 # 更新间隔，单位：小时
 sniffer:
