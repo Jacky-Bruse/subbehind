@@ -30,7 +30,6 @@ dns:
   prefer-h3: true
   ipv6: false
   listen: 0.0.0.0:7874
-  enhanced-mode: redir-host # mihomo 的 DNS 处理模式 redir-host / fake-ip
   fake-ip-range: 198.18.0.1/16
   enhanced-mode: fake-ip
   fake-ip-filter: ['+.*']
