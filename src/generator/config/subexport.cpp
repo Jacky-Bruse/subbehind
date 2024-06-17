@@ -1987,9 +1987,21 @@ proxyToLoon(std::vector<Proxy> &nodes, const std::string &base_conf, std::vector
                 if(!x.ServerName.empty()){
                     proxy += ",sni="+x.ServerName;
                 }
-                if(!x.DownMbps.empty()){
-                    proxy += ",download-bandwidth="+x.DownMbps;
+                if(!x.UpMbps.empty()){
+                    std::string search = " Mbps";
+                    size_t pos = x.UpMbps.find(search);
+                    if (pos != std::string::npos) {
+                        x.UpMbps.replace(pos, search.length(), "");
+                    } else{
+                        search = "Mbps";
+                        pos = x.UpMbps.find(search);
+                        if (pos != std::string::npos) {
+                            x.UpMbps.replace(pos, search.length(), "");
+                        }
+                    }
+                    proxy += ",download-bandwidth="+x.UpMbps;
                 }
+                break;
             default:
                 continue;
         }
