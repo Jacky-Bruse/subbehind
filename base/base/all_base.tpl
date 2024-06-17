@@ -10,7 +10,7 @@ tcp-concurrent: true
 find-process-mode: strict
 global-client-fingerprint: chrome
 #  TCP keep alive interval
-keep-alive-interval: 15
+keep-alive-interval: 30
 #自定义 geodata url
 geodata-mode: false  # GEOIP 数据模式,更改 geoip 使用文件,mmdb 或者 dat,可选,true 为 dat
 geodata-loader: memconservative # GEO 文件加载模式 standard / memconservative
@@ -27,11 +27,14 @@ sniffer:
   skip-domain: ['Mijia Cloud']
 dns:
   enable: true
+  cache-algorithm: arc # 缓存算法
   prefer-h3: false
   ipv6: false
   listen: 0.0.0.0:7874
   fake-ip-range: 198.18.0.1/16
   respect-rules: true
+  default-nameserver: # 默认 DNS, 用于解析 DNS 服务器 的域名，必须为 IP, 可为加密 DNS
+    - "https://223.5.5.5/dns-query" 
   enhanced-mode: fake-ip
   fake-ip-filter: ['+.*']
   nameserver-policy:
