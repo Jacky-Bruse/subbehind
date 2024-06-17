@@ -27,10 +27,11 @@ sniffer:
   skip-domain: ['Mijia Cloud']
 dns:
   enable: true
-  prefer-h3: true
+  prefer-h3: false
   ipv6: false
   listen: 0.0.0.0:7874
   fake-ip-range: 198.18.0.1/16
+  respect-rules: true
   enhanced-mode: fake-ip
   fake-ip-filter: ['+.*']
   nameserver-policy:
@@ -44,8 +45,8 @@ dns:
     - https://dns.adguard.com/dns-query
     - 'https://223.5.5.5/dns-query#h3=true'
   proxy-server-nameserver: # 仅用于解析代理节点的域名,配置服务器若查询失败将使用 nameserver,非并发查询
-    - "https://1.1.1.1/dns-query" # Cloudflare IPv4 DoH
-    - "https://1.0.0.1/dns-query" # Cloudflare IPv4 DoH
+    - "https://223.5.5.5/dns-query"
+    - "https://doh.pub/dns-query"
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
