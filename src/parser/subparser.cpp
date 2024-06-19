@@ -1447,7 +1447,7 @@ void explodeStdHysteria(std::string hysteria, Proxy &node) {
 }
 
 void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
-    std::string add, port, password, host, insecure, up, down, alpn, obfsParam, obfsPassword, remarks, sni;
+    std::string add, port, password, host, insecure, up, down, alpn, obfsParam, obfsPassword, remarks, sni ,ports;
     std::string addition;
     tribool scv;
     hysteria2 = hysteria2.substr(12);
@@ -1488,11 +1488,12 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
     obfsPassword = getUrlArg(addition, "obfs-password");
     host = getUrlArg(addition, "sni");
     sni = getUrlArg(addition, "sni");
+    ports = getUrlArg(addition, "ports");
     if (remarks.empty())
         remarks = add + ":" + port;
 
     hysteria2Construct(node, HYSTERIA2_DEFAULT_GROUP, remarks, add, port, password, host, up, down, alpn, obfsParam,
-                       obfsPassword, host, "", "", tribool(), tribool(), scv);
+                       obfsPassword, host, "", ports, tribool(), tribool(), scv);
     return;
 }
 

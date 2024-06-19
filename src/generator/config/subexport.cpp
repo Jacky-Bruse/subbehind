@@ -2000,16 +2000,30 @@ proxyToLoon(std::vector<Proxy> &nodes, const std::string &base_conf, std::vector
                         }
                     }
                     proxy += ",download-bandwidth="+x.UpMbps;
+                }else{
+                    proxy += ",download-bandwidth=100";
                 }
+                if (!scv.is_undef())
+                    proxy += ",skip-cert-verify=" + std::string(scv.get() ? "true" : "false");
                 break;
             default:
                 continue;
         }
 
-        if (ext.tfo)
+        if (ext.tfo){
             proxy += ",fast-open=true";
-        if (ext.udp)
+        } else {
+            if (x.Type == ProxyType::Hysteria2){
+                proxy += ",fast-open=false";
+            }
+        }
+        if (ext.udp){
             proxy += ",udp=true";
+        } else {
+            if (x.Type == ProxyType::Hysteria2){
+                proxy += ",udp=true";
+            }
+        }
 
 
         if (ext.nodelist)
