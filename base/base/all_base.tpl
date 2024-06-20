@@ -5,14 +5,13 @@ allow-lan: {{ default(global.clash.allow_lan, "true") }}
 mode: rule
 log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: :9090
-unified-delay: true
-tcp-concurrent: true
-find-process-mode: strict
+find-process-mode: strict # 进程模式 off / strict / always
 global-client-fingerprint: chrome
-#  TCP keep alive interval
-keep-alive-interval: 30
+tcp-concurrent: true # TCP 并发 如果域名解析结果对应多个IP,并发请求所有IP,选择握手最快的IP进行通讯
+keep-alive-interval: 30 # TCP Keep Alive 间隔,单位分钟 | 控制 Clash 发出 TCP Keep Alive 包的间隔,减少移动设备耗电问题的临时措施
+unified-delay: true # 统一延迟
 #自定义 geodata url
-geodata-mode: false  # GEOIP 数据模式,更改 geoip 使用文件,mmdb 或者 dat,可选,true 为 dat
+geodata-mode: false # GEOIP 数据模式,更改 geoip 使用文件,mmdb 或者 dat,可选,true 为 dat
 geodata-loader: memconservative # GEO 文件加载模式 standard / memconservative
 geox-url:
   geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
@@ -28,7 +27,7 @@ sniffer:
 dns:
   enable: true
   cache-algorithm: arc # 缓存算法
-  prefer-h3: true
+  prefer-h3: true # 开启 DoH 支持 HTTP/3,将并发尝试，提前确认DNS服务商可用h3
   ipv6: false
   listen: 0.0.0.0:7874
   fake-ip-range: 198.18.0.1/16
