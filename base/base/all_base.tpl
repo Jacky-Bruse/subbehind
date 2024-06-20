@@ -28,11 +28,11 @@ sniffer:
 dns:
   enable: true
   cache-algorithm: arc # 缓存算法
-  prefer-h3: false
+  prefer-h3: true
   ipv6: false
   listen: 0.0.0.0:7874
   fake-ip-range: 198.18.0.1/16
-  respect-rules: true
+  respect-rules: false
   default-nameserver: # 默认 DNS, 用于解析 DNS 服务器 的域名，必须为 IP, 可为加密 DNS
     - "https://223.5.5.5/dns-query" 
   enhanced-mode: fake-ip
@@ -43,7 +43,7 @@ dns:
       - 'https://1.12.12.12/dns-query'
       - 'https://doh.pub/dns-query'
   nameserver:
-    - 'https://1.1.1.1/dns-query#h3=true'
+    - 'https://1.1.1.1/dns-query#DNS&h3=true'
     - 'tls://8.8.4.4:853#DNS'
     - https://dns.adguard.com/dns-query
     - 'https://223.5.5.5/dns-query#h3=true'
