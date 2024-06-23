@@ -19,11 +19,25 @@ geox-url:
   mmdb: "https://cdn.jsdelivr.net/gh/Hackl0us/GeoIP2-CN@release/Country.mmdb"
 geo-auto-update: true  # 是否自动更新 geodata
 geo-update-interval: 48 # 更新间隔，单位：小时
+#################### 域名嗅探 ####################
 sniffer:
-  enable: true
-  parse-pure-ip: true
-  sniff: {HTTP: {ports: [80, 8080-8880]}, TLS: {ports: [443, 8443]}, QUIC: {ports: [443, 8443]}}
-  skip-domain: ['Mijia Cloud']
+  enable: true # 是否启用,可选 true/false
+  force-dns-mapping: true # 对 redir-host 类型识别的流量进行强制嗅探
+  parse-pure-ip: true # 对所有未获取到域名的流量进行强制嗅探
+  override-destination: true # 是否使用嗅探结果作为实际访问,默认为 true
+  sniff:
+    QUIC:
+      ports: [443, 8443]
+    TLS: # TLS 默认如果不配置 ports 默认嗅探 443
+      ports: [443, 8443]
+    HTTP:
+      ports: [80, 8080-8880]
+      override-destination: true # 可覆盖 sniffer.override-destination
+  force-domain:
+    - "+.v2ex.com"
+  skip-domain: # 需要跳过嗅探的域名,主要解决部分站点sni字段非域名,导致嗅探结果异常的问题,如米家设备
+    - "Mijia Cloud"
+
 dns:
   enable: true
   cache-algorithm: arc # 缓存算法
@@ -34,15 +48,18 @@ dns:
   respect-rules: false
   default-nameserver: # 默认 DNS, 用于解析 DNS 服务器 的域名，必须为 IP, 可为加密 DNS
     - "https://223.5.5.5/dns-query" 
+    - "https://1.12.12.12/dns-query"
   enhanced-mode: fake-ip
   fake-ip-filter: ['+.*']
   nameserver-policy:
-    "geosite:cn,private,geolocation-cn,microsoft@cn,apple-cn,google-cn,category-games@cn":
+    "geosite:private,cn,geolocation-cn":
       - 'https://223.5.5.5/dns-query#h3=true'
       - 'https://1.12.12.12/dns-query'
-      - 'https://doh.pub/dns-query'
+      - 'https://223.6.6.6/dns-query#h3=true'
+
   nameserver:
     - 'https://1.1.1.1/dns-query#DNS&h3=true'
+    - https://8.8.8.8/dns-query
     - 'tls://8.8.4.4:853#DNS'
     - https://dns.adguard.com/dns-query
     - 'https://223.5.5.5/dns-query#h3=true'
