@@ -59,6 +59,7 @@ services:
 | Surge 2                           |     ✓     |      ✓       | surge&ver=2    |
 | Surge 3                           |     ✓     |      ✓       | surge&ver=3    |
 | Surge 4                           |     ✓     |      ✓       | surge&ver=4    |
+| Surge 5                           |     ✓     |      ✓       | surge&ver=5    |
 | V2Ray                             |     ✓     |      ✓       | v2ray          |
 | Telegram-liked HTTP/Socks 5 links |     ✓     |      ×       | Only as source |
 | Singbox                           |     ✓      |      ✓       | singbox        |
