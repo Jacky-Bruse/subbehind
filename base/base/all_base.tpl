@@ -35,6 +35,11 @@ sniffer:
       override-destination: true # 可覆盖 sniffer.override-destination
   force-domain:
     - "+.v2ex.com"
+    - "+.chatgpt.com"
+    - "chat.openai.com"
+    - "*.chatgpt.com"
+    - "+.openai.com" # 包含所有openai.com的子域名
+    - "*.openai.com" # 包含所有openai.com的子域名
   skip-domain: # 需要跳过嗅探的域名,主要解决部分站点sni字段非域名,导致嗅探结果异常的问题,如米家设备
     - "Mijia Cloud"
 
