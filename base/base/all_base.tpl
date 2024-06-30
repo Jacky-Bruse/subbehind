@@ -50,12 +50,15 @@ dns:
   ipv6: false
   listen: 0.0.0.0:7874
   fake-ip-range: 198.18.0.1/16
-  respect-rules: false
+  respect-rules: true
   default-nameserver: # 默认 DNS, 用于解析 DNS 服务器 的域名，必须为 IP, 可为加密 DNS
-    - "https://223.5.5.5/dns-query" 
-    - "https://1.12.12.12/dns-query"
+    - 'tls://223.5.5.5:853'
+    - 'tls://1.12.12.12:853'
   enhanced-mode: fake-ip
-  fake-ip-filter: ['+.*']
+  fake-ip-filter:
+    - "*"
+    - "+.lan"
+    - "+.local"
   nameserver-policy:
     "geosite:private,cn,geolocation-cn":
       - 'https://223.5.5.5/dns-query#h3=true'
