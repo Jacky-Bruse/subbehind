@@ -56,6 +56,7 @@ dns:
     - 'tls://1.12.12.12:853'
   enhanced-mode: fake-ip
   fake-ip-filter:
+    - "+.*"
     - "*"
     - "+.lan"
     - "+.local"
