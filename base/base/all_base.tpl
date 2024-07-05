@@ -45,36 +45,29 @@ sniffer:
 
 dns:
   enable: true
-  cache-algorithm: arc # 缓存算法
-  prefer-h3: true # 开启 DoH 支持 HTTP/3,将并发尝试，提前确认DNS服务商可用h3
+  listen: :7874
   ipv6: false
-  listen: 0.0.0.0:7874
-  fake-ip-range: 198.18.0.1/16
-  respect-rules: true
-  default-nameserver: # 默认 DNS, 用于解析 DNS 服务器 的域名，必须为 IP, 可为加密 DNS
-    - 'tls://223.5.5.5:853'
-    - 'tls://1.12.12.12:853'
   enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.0/15
   fake-ip-filter:
-    - "+.*"
     - "*"
+    - ".*"
     - "+.lan"
     - "+.local"
+  respect-rules: true
+  default-nameserver:
+    - tls://223.5.5.5:853
+    - tls://1.12.12.12:853
+  proxy-server-nameserver:
+    - https://223.5.5.5/dns-query
+    - https://1.12.12.12/dns-query
+  nameserver:
+    - https://dns.cloudflare.com/dns-query
+    - https://dns.google/dns-query
   nameserver-policy:
     "geosite:private,cn,geolocation-cn":
-      - 'https://223.5.5.5/dns-query#h3=true'
-      - 'https://1.12.12.12/dns-query'
-      - 'https://223.6.6.6/dns-query#h3=true'
-
-  nameserver:
-    - 'https://1.1.1.1/dns-query#DNS&h3=true'
-    - https://8.8.8.8/dns-query
-    - 'tls://8.8.4.4:853#DNS'
-    - https://dns.adguard.com/dns-query
-    - 'https://223.5.5.5/dns-query#h3=true'
-  proxy-server-nameserver: # 仅用于解析代理节点的域名,配置服务器若查询失败将使用 nameserver,非并发查询
-    - "https://223.5.5.5/dns-query"
-    - "https://doh.pub/dns-query"
+      - https://1.12.12.12/dns-query
+      - https://223.5.5.5/dns-query
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
