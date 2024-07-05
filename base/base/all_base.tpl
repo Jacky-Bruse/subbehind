@@ -51,7 +51,7 @@ dns:
   fake-ip-range: 198.18.0.0/15
   fake-ip-filter:
     - "*"
-    - ".*"
+    - "+.*"
     - "+.lan"
     - "+.local"
   respect-rules: true
