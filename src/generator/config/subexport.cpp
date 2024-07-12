@@ -1436,7 +1436,9 @@ void proxyToQuanX(std::vector<Proxy> &nodes, INIReader &ini, std::vector<Ruleset
                 break;
             case ProxyType::VLESS:
                 if (method == "auto")
-                    method = "chacha20-ietf-poly1305";
+                    method = "none";
+                else
+                    method = "none";
                 proxyStr = "vless = " + hostname + ":" + port + ", method=" + method + ", password=" + id;
                 if (x.AlterId != 0)
                     proxyStr += ", aead=false";
@@ -1534,7 +1536,7 @@ void proxyToQuanX(std::vector<Proxy> &nodes, INIReader &ini, std::vector<Ruleset
             proxyStr += ", fast-open=" + tfo.get_str();
         if (!udp.is_undef())
             proxyStr += ", udp-relay=" + udp.get_str();
-        if (tlssecure && !scv.is_undef() && (x.Type != ProxyType::Shadowsocks && x.Type != ProxyType::ShadowsocksR))
+        if (tlssecure && !scv.is_undef() && (x.Type != ProxyType::Shadowsocks && x.Type != ProxyType::ShadowsocksR && x.Type != ProxyType::VLESS))
             proxyStr += ", tls-verification=" + scv.reverse().get_str();
         proxyStr += ", tag=" + x.Remark;
 
