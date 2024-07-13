@@ -486,6 +486,36 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.Ports.empty())
                     singleproxy["ports"] = x.Ports;
                 break;
+            case ProxyType::TUIC:
+                singleproxy["type"] = "tuic";
+                if (!x.Password.empty()) {
+                    singleproxy["password"] = x.Password;
+                }
+                if (!x.UserId.empty()) {
+                    singleproxy["uuid"] = x.UserId;
+                }
+                if (!x.token.empty()) {
+                    singleproxy["token"] = x.token;
+                }
+                if (!x.ServerName.empty()) {
+                    singleproxy["sni"] = x.ServerName;
+                }
+                if (!scv.is_undef())
+                    singleproxy["skip-cert-verify"] = scv.get();
+                if (!x.Alpn.empty())
+                    singleproxy["alpn"].push_back(x.Alpn);
+                singleproxy["disable-sni"] = x.DisableSni.get();
+                singleproxy["reduce-rtt"] = x.ReduceRtt.get();
+                singleproxy["request-timeout"] = x.RequestTimeout;
+                if (!x.UdpRelayMode.empty()) {
+                    if (x.UdpRelayMode == "native" || x.UdpRelayMode == "quic") {
+                        singleproxy["udp-relay-mode"] = x.UdpRelayMode;
+                    }
+                }
+                if (!x.CongestionControl.empty()) {
+                    singleproxy["congestion-controller"] = x.CongestionControl;
+                }
+                break;
             case ProxyType::VLESS:
                 singleproxy["type"] = "vless";
                 singleproxy["uuid"] = x.UserId;
@@ -559,7 +589,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
 
         // UDP is not supported yet in clash using snell
         // sees in https://dreamacro.github.io/clash/configuration/outbound.html#snell
-        if (udp && x.Type != ProxyType::Snell)
+        if (udp && x.Type != ProxyType::Snell && x.Type != ProxyType::TUIC)
             singleproxy["udp"] = true;
         if (block)
             singleproxy.SetStyle(YAML::EmitterStyle::Block);
@@ -1536,7 +1566,8 @@ void proxyToQuanX(std::vector<Proxy> &nodes, INIReader &ini, std::vector<Ruleset
             proxyStr += ", fast-open=" + tfo.get_str();
         if (!udp.is_undef())
             proxyStr += ", udp-relay=" + udp.get_str();
-        if (tlssecure && !scv.is_undef() && (x.Type != ProxyType::Shadowsocks && x.Type != ProxyType::ShadowsocksR && x.Type != ProxyType::VLESS))
+        if (tlssecure && !scv.is_undef() &&
+            (x.Type != ProxyType::Shadowsocks && x.Type != ProxyType::ShadowsocksR && x.Type != ProxyType::VLESS))
             proxyStr += ", tls-verification=" + scv.reverse().get_str();
         proxyStr += ", tag=" + x.Remark;
 
@@ -1986,23 +2017,23 @@ proxyToLoon(std::vector<Proxy> &nodes, const std::string &base_conf, std::vector
                 break;
             case ProxyType::Hysteria2:
                 proxy = "Hysteria2," + hostname + "," + port + ",\"" + password + "\"";
-                if(!x.ServerName.empty()){
-                    proxy += ",sni="+x.ServerName;
+                if (!x.ServerName.empty()) {
+                    proxy += ",sni=" + x.ServerName;
                 }
-                if(!x.UpMbps.empty()){
+                if (!x.UpMbps.empty()) {
                     std::string search = " Mbps";
                     size_t pos = x.UpMbps.find(search);
                     if (pos != std::string::npos) {
                         x.UpMbps.replace(pos, search.length(), "");
-                    } else{
+                    } else {
                         search = "Mbps";
                         pos = x.UpMbps.find(search);
                         if (pos != std::string::npos) {
                             x.UpMbps.replace(pos, search.length(), "");
                         }
                     }
-                    proxy += ",download-bandwidth="+x.UpMbps;
-                }else{
+                    proxy += ",download-bandwidth=" + x.UpMbps;
+                } else {
                     proxy += ",download-bandwidth=100";
                 }
                 if (!scv.is_undef())
@@ -2012,17 +2043,17 @@ proxyToLoon(std::vector<Proxy> &nodes, const std::string &base_conf, std::vector
                 continue;
         }
 
-        if (ext.tfo){
+        if (ext.tfo) {
             proxy += ",fast-open=true";
         } else {
-            if (x.Type == ProxyType::Hysteria2){
+            if (x.Type == ProxyType::Hysteria2) {
                 proxy += ",fast-open=false";
             }
         }
-        if (ext.udp){
+        if (ext.udp) {
             proxy += ",udp=true";
         } else {
-            if (x.Type == ProxyType::Hysteria2){
+            if (x.Type == ProxyType::Hysteria2) {
                 proxy += ",udp=true";
             }
         }
@@ -2467,6 +2498,32 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json, std::vector
                     }
                     proxy.AddMember("obfs", obfs, allocator);
 
+                }
+                break;
+            }
+            case ProxyType::TUIC: {
+                addSingBoxCommonMembers(proxy, x, "tuic", allocator);
+                proxy.AddMember("password", rapidjson::StringRef(x.Password.c_str()), allocator);
+                proxy.AddMember("uuid", rapidjson::StringRef(x.UserId.c_str()), allocator);
+                if (!x.TLSSecure && !x.Alpn.empty()) {
+                    rapidjson::Value tls(rapidjson::kObjectType);
+                    tls.AddMember("enabled", true, allocator);
+                    if (!x.ServerName.empty())
+                        tls.AddMember("server_name", rapidjson::StringRef(""), allocator);
+                    if (!x.Alpn.empty()) {
+                        auto alpns = stringArrayToJsonArray(x.Alpn, ",", allocator);
+                        tls.AddMember("alpn", alpns, allocator);
+                    }
+                    proxy.AddMember("tls", tls, allocator);
+                }
+                if (!x.CongestionControl.empty()){
+                    proxy.AddMember("congestion_control", rapidjson::StringRef(x.CongestionControl.c_str()), allocator);
+                }
+                if (!x.UdpRelayMode.empty()){
+                    proxy.AddMember("udp_relay_mode", rapidjson::StringRef(x.UdpRelayMode.c_str()), allocator);
+                }
+                if (!x.ReduceRtt.is_undef()){
+                    proxy.AddMember("zero_rtt_handshake", buildBooleanValue(x.ReduceRtt), allocator);
                 }
                 break;
             }

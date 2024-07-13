@@ -239,6 +239,25 @@ void hysteria2Construct(Proxy &node, const std::string &group, const std::string
     node.Ports = ports;
 }
 
+void tuicConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &add,
+                   const std::string &port, const std::string &password, const std::string &congestion_control,
+                   const std::string &alpn,
+                   const std::string &sni, const std::string &uuid, const std::string &udpRelayMode,const std::string &token,
+                   tribool udp, tribool tfo,
+                   tribool scv, tribool reduceRtt, tribool disableSni) {
+    commonConstruct(node, ProxyType::TUIC, group, remarks, add, port, udp, tfo, scv, tribool());
+    node.Password = password;
+    node.Alpn = alpn;
+    node.ServerName = sni;
+    node.CongestionControl = congestion_control;
+    node.ReduceRtt = reduceRtt;
+    node.DisableSni = disableSni;
+    node.UserId = uuid;
+    node.UdpRelayMode = udpRelayMode;
+    node.token = token;
+}
+
+
 void explodeVmess(std::string vmess, Proxy &node) {
     std::string version, ps, add, port, type, id, aid, net, path, host, tls, sni;
     Document jsondata;
@@ -1072,8 +1091,10 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
         std::string ip, ipv6, private_key, public_key, mtu; //wireguard
         std::string auth, up, down, obfsParam, insecure, alpn;//hysteria
         std::string obfsPassword;//hysteria2
+        std::string congestion_control, udp_relay_mode,token;// tuic
         string_array dns_server;
         tribool udp, tfo, scv;
+        bool reduceRtt, disableSni;//tuic
         Proxy node;
         singleproxy = yamlnode[section][i];
         singleproxy["type"] >>= proxytype;
@@ -1361,6 +1382,24 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 hysteria2Construct(node, group, ps, server, port, password, host, up, down, alpn, obfsParam,
                                    obfsPassword, sni, public_key, ports, udp, tfo, scv);
                 break;
+            case "tuic"_hash:
+                group = TUIC_DEFAULT_GROUP;
+                singleproxy["password"] >>= password;
+                singleproxy["uuid"] >>= password;
+                singleproxy["congestion-controller"] >>= congestion_control;
+                singleproxy["sni"] >>= sni;
+                if (!singleproxy["alpn"].IsNull()) {
+                    singleproxy["alpn"][0] >>= alpn;
+                }
+                singleproxy["disable-sni"] >>= disableSni;
+                singleproxy["reduce-rtt"] >>= reduceRtt;
+                singleproxy["token"] >>= token;
+                tuicConstruct(node, TUIC_DEFAULT_GROUP, ps, server, port, password, congestion_control, alpn, sni, id,
+                              udp_relay_mode,token,
+                              tribool(),
+                              tribool(), scv, reduceRtt, disableSni);
+
+                break;
             default:
                 continue;
         }
@@ -1447,7 +1486,7 @@ void explodeStdHysteria(std::string hysteria, Proxy &node) {
 }
 
 void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
-    std::string add, port, password, host, insecure, up, down, alpn, obfsParam, obfsPassword, remarks, sni ,ports;
+    std::string add, port, password, host, insecure, up, down, alpn, obfsParam, obfsPassword, remarks, sni, ports;
     std::string addition;
     tribool scv;
     hysteria2 = hysteria2.substr(12);
@@ -2593,7 +2632,8 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
             std::string auth, up, down, obfsParam, insecure, alpn;//hysteria
             std::string obfsPassword;//hysteria2
             string_array dns_server;
-            tribool udp, tfo, scv;
+            std::string congestion_control,udp_relay_mode;//quic
+            tribool udp, tfo, scv,rrt;
             rapidjson::Value singboxNode = outbounds[i].GetObject();
             if (singboxNode.HasMember("type") && singboxNode["type"].IsString()) {
                 Proxy node;
@@ -2762,6 +2802,19 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                         hysteria2Construct(node, group, ps, server, port, password, host, up, down, alpn, obfsParam,
                                            obfsPassword, sni, public_key, "", udp, tfo, scv);
                         break;
+                    case "tuic"_hash:
+                        group = TUIC_DEFAULT_GROUP;
+                        password = GetMember(singboxNode, "password");
+                        id = GetMember(singboxNode, "uuid");
+                        congestion_control = GetMember(singboxNode, "congestion_control");
+                        if (singboxNode.HasMember("zero_rtt_handshake") && singboxNode["zero_rtt_handshake"].IsBool()) {
+                            rrt = singboxNode["zero_rtt_handshake"].GetBool();
+                        }
+                        udp_relay_mode = GetMember(singboxNode, "udp_relay_mode");
+                        tuicConstruct(node, TUIC_DEFAULT_GROUP, ps, server, port, password, congestion_control, alpn, sni, id, udp_relay_mode, "",
+                                      tribool(),
+                                      tribool(), scv,rrt);
+                        break;
                     default:
                         continue;
                 }
@@ -2771,6 +2824,66 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
             }
         }
     }
+}
+
+void explodeTuic(const std::string &tuic, Proxy &node) {
+    std::string add, port, password, host, insecure, alpn, remarks, sni, ports, congestion_control;
+    std::string addition;
+    tribool scv;
+    std::string link = tuic.substr(7);
+    string_size pos;
+
+    pos = link.rfind("#");
+    if (pos != std::string::npos) {
+        remarks = urlDecode(link.substr(pos + 1));
+        link.erase(pos);
+    }
+
+    pos = link.rfind("?");
+    if (pos != std::string::npos) {
+        addition = link.substr(pos + 1);
+        link.erase(pos);
+    }
+
+    std::string uuid;
+    pos = link.find(":");
+    if (pos != std::string::npos) {
+        uuid = link.substr(0, pos);
+        link = link.substr(pos + 1);
+        if (strFind(link, "@")) {
+            pos = link.find("@");
+            if (pos != std::string::npos) {
+                password = link.substr(0, pos);
+                link = link.substr(pos + 1);
+            }
+        }
+    }
+
+    pos = link.find(":");
+    if (pos != std::string::npos) {
+        add = link.substr(0, pos);
+        link = link.substr(pos + 1);
+        pos = link.find("?");
+        if (pos != std::string::npos) {
+            port = link.substr(0, pos);
+            addition = link.substr(pos + 1);
+        } else {
+            port = link;
+        }
+    }
+
+
+    scv = getUrlArg(addition, "insecure");
+    alpn = getUrlArg(addition, "alpn");
+    sni = getUrlArg(addition, "sni");
+    congestion_control = getUrlArg(addition, "congestion_control");
+    if (remarks.empty())
+        remarks = add + ":" + port;
+    tuicConstruct(node, TUIC_DEFAULT_GROUP, remarks, add, port, password, congestion_control, alpn, sni, uuid, "native", "",
+                  tribool(),
+                  tribool(), scv);
+
+    return;
 }
 
 void explode(const std::string &link, Proxy &node) {
@@ -2792,6 +2905,8 @@ void explode(const std::string &link, Proxy &node) {
         explodeVless(link, node);
     else if (strFind(link, "hysteria://") || strFind(link, "hy://"))
         explodeHysteria(link, node);
+    else if (strFind(link, "tuic://"))
+        explodeTuic(link, node);
     else if (strFind(link, "hysteria2://") || strFind(link, "hy2://"))
         explodeHysteria2(link, node);
     else if (isLink(link))

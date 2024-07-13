@@ -78,7 +78,12 @@ void snellConstruct(Proxy &node, const std::string &group, const std::string &re
                     const std::string &port, const std::string &password, const std::string &obfs,
                     const std::string &host, uint16_t version = 0, tribool udp = tribool(), tribool tfo = tribool(),
                     tribool scv = tribool());
-
+void tuicConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &add,
+                   const std::string &port, const std::string &password, const std::string &congestion_control,
+                   const std::string &alpn,
+                   const std::string &sni,const std::string & uuid,const std::string &udpRelayMode,const std::string &token,
+                   tribool udp = tribool(), tribool tfo = tribool(),
+                   tribool scv = tribool(),tribool reduceRtt = tribool(),tribool disableSni = tribool());
 void explodeVmess(std::string vmess, Proxy &node);
 
 void explodeSSR(std::string ssr, Proxy &node);
