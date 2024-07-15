@@ -242,7 +242,8 @@ void hysteria2Construct(Proxy &node, const std::string &group, const std::string
 void tuicConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &add,
                    const std::string &port, const std::string &password, const std::string &congestion_control,
                    const std::string &alpn,
-                   const std::string &sni, const std::string &uuid, const std::string &udpRelayMode,const std::string &token,
+                   const std::string &sni, const std::string &uuid, const std::string &udpRelayMode,
+                   const std::string &token,
                    tribool udp, tribool tfo,
                    tribool scv, tribool reduceRtt, tribool disableSni) {
     commonConstruct(node, ProxyType::TUIC, group, remarks, add, port, udp, tfo, scv, tribool());
@@ -1091,7 +1092,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
         std::string ip, ipv6, private_key, public_key, mtu; //wireguard
         std::string auth, up, down, obfsParam, insecure, alpn;//hysteria
         std::string obfsPassword;//hysteria2
-        std::string congestion_control, udp_relay_mode,token;// tuic
+        std::string congestion_control, udp_relay_mode, token;// tuic
         string_array dns_server;
         tribool udp, tfo, scv;
         bool reduceRtt, disableSni;//tuic
@@ -1395,7 +1396,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 singleproxy["reduce-rtt"] >>= reduceRtt;
                 singleproxy["token"] >>= token;
                 tuicConstruct(node, TUIC_DEFAULT_GROUP, ps, server, port, password, congestion_control, alpn, sni, id,
-                              udp_relay_mode,token,
+                              udp_relay_mode, token,
                               tribool(),
                               tribool(), scv, reduceRtt, disableSni);
 
@@ -2632,8 +2633,8 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
             std::string auth, up, down, obfsParam, insecure, alpn;//hysteria
             std::string obfsPassword;//hysteria2
             string_array dns_server;
-            std::string congestion_control,udp_relay_mode;//quic
-            tribool udp, tfo, scv,rrt;
+            std::string congestion_control, udp_relay_mode;//quic
+            tribool udp, tfo, scv, rrt, disableSni;
             rapidjson::Value singboxNode = outbounds[i].GetObject();
             if (singboxNode.HasMember("type") && singboxNode["type"].IsString()) {
                 Proxy node;
@@ -2656,6 +2657,9 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                     }
                     if (tlsObj.HasMember("insecure") && tlsObj["insecure"].IsBool()) {
                         scv = tlsObj["insecure"].GetBool();
+                    }
+                    if (tlsObj.HasMember("disable_sni") && tlsObj["disable_sni"].IsBool()) {
+                        disableSni = tlsObj["disable_sni"].GetBool();
                     }
                     if (tlsObj.HasMember("certificate") && tlsObj["certificate"].IsString()) {
                         public_key = tlsObj["certificate"].GetString();
@@ -2811,9 +2815,10 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                             rrt = singboxNode["zero_rtt_handshake"].GetBool();
                         }
                         udp_relay_mode = GetMember(singboxNode, "udp_relay_mode");
-                        tuicConstruct(node, TUIC_DEFAULT_GROUP, ps, server, port, password, congestion_control, alpn, sni, id, udp_relay_mode, "",
+                        tuicConstruct(node, TUIC_DEFAULT_GROUP, ps, server, port, password, congestion_control, alpn,
+                                      sni, id, udp_relay_mode, "",
                                       tribool(),
-                                      tribool(), scv,rrt);
+                                      tribool(), scv, rrt, disableSni);
                         break;
                     default:
                         continue;
@@ -2879,7 +2884,8 @@ void explodeTuic(const std::string &tuic, Proxy &node) {
     congestion_control = getUrlArg(addition, "congestion_control");
     if (remarks.empty())
         remarks = add + ":" + port;
-    tuicConstruct(node, TUIC_DEFAULT_GROUP, remarks, add, port, password, congestion_control, alpn, sni, uuid, "native", "",
+    tuicConstruct(node, TUIC_DEFAULT_GROUP, remarks, add, port, password, congestion_control, alpn, sni, uuid, "native",
+                  "",
                   tribool(),
                   tribool(), scv);
 

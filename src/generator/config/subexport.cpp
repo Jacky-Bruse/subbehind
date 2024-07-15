@@ -2509,10 +2509,13 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json, std::vector
                     rapidjson::Value tls(rapidjson::kObjectType);
                     tls.AddMember("enabled", true, allocator);
                     if (!x.ServerName.empty())
-                        tls.AddMember("server_name", rapidjson::StringRef(""), allocator);
+                        tls.AddMember("server_name", rapidjson::StringRef(x.ServerName.c_str()), allocator);
                     if (!x.Alpn.empty()) {
                         auto alpns = stringArrayToJsonArray(x.Alpn, ",", allocator);
                         tls.AddMember("alpn", alpns, allocator);
+                    }
+                    if(!x.DisableSni.is_undef()){
+                        tls.AddMember("disable_sni", buildBooleanValue(x.DisableSni), allocator);
                     }
                     proxy.AddMember("tls", tls, allocator);
                 }
