@@ -83,7 +83,7 @@ void tuicConstruct(Proxy &node, const std::string &group, const std::string &rem
                    const std::string &alpn,
                    const std::string &sni,const std::string & uuid,const std::string &udpRelayMode,const std::string &token,
                    tribool udp = tribool(), tribool tfo = tribool(),
-                   tribool scv = tribool(),tribool reduceRtt = tribool(),tribool disableSni = tribool());
+                   tribool scv = tribool(),tribool reduceRtt = tribool(),tribool disableSni = tribool(),uint16_t request_timeout = 15000);
 void explodeVmess(std::string vmess, Proxy &node);
 
 void explodeSSR(std::string ssr, Proxy &node);

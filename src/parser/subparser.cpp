@@ -245,7 +245,7 @@ void tuicConstruct(Proxy &node, const std::string &group, const std::string &rem
                    const std::string &sni, const std::string &uuid, const std::string &udpRelayMode,
                    const std::string &token,
                    tribool udp, tribool tfo,
-                   tribool scv, tribool reduceRtt, tribool disableSni) {
+                   tribool scv, tribool reduceRtt, tribool disableSni,uint16_t request_timeout) {
     commonConstruct(node, ProxyType::TUIC, group, remarks, add, port, udp, tfo, scv, tribool());
     node.Password = password;
     node.Alpn = alpn;
@@ -256,6 +256,7 @@ void tuicConstruct(Proxy &node, const std::string &group, const std::string &rem
     node.UserId = uuid;
     node.UdpRelayMode = udpRelayMode;
     node.token = token;
+    node.RequestTimeout = request_timeout;
 }
 
 
@@ -1385,9 +1386,11 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 break;
             case "tuic"_hash:
                 group = TUIC_DEFAULT_GROUP;
+                uint16_t request_timeout;
                 singleproxy["password"] >>= password;
-                singleproxy["uuid"] >>= password;
+                singleproxy["uuid"] >>= id;
                 singleproxy["congestion-controller"] >>= congestion_control;
+                singleproxy["udp-relay-mode"] >>= udp_relay_mode;
                 singleproxy["sni"] >>= sni;
                 if (!singleproxy["alpn"].IsNull()) {
                     singleproxy["alpn"][0] >>= alpn;
@@ -1395,10 +1398,11 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 singleproxy["disable-sni"] >>= disableSni;
                 singleproxy["reduce-rtt"] >>= reduceRtt;
                 singleproxy["token"] >>= token;
+                singleproxy["request-timeout"] >>= request_timeout;
                 tuicConstruct(node, TUIC_DEFAULT_GROUP, ps, server, port, password, congestion_control, alpn, sni, id,
                               udp_relay_mode, token,
                               tribool(),
-                              tribool(), scv, reduceRtt, disableSni);
+                              tribool(), scv, reduceRtt, disableSni,request_timeout);
 
                 break;
             default:
