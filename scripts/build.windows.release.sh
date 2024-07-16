@@ -1,6 +1,14 @@
 #!/bin/bash
 set -xe
 
+# 获取系统架构
+ARCH=$(uname -m)
+
+if [ "$ARCH" == "x86_64" ]; then
+    MY_MINGW_PREFIX="/mingw64"
+else
+    MY_MINGW_PREFIX="/mingw32"
+fi
 #git clone https://github.com/curl/curl --depth=1 --branch tiny-curl-8_4
 #cd curl
 #cmake -DCMAKE_BUILD_TYPE=Release -DCURL_USE_LIBSSH2=OFF -DHTTP_ONLY=ON -DCURL_USE_SCHANNEL=ON -DBUILD_SHARED_LIBS=OFF -DBUILD_CURL_EXE=OFF -DCMAKE_INSTALL_PREFIX="$MINGW_PREFIX" -G "Unix Makefiles" -DHAVE_LIBIDN2=OFF -DCURL_USE_LIBPSL=OFF .
@@ -53,5 +61,5 @@ cmake -DCMAKE_BUILD_TYPE=Release -G "Unix Makefiles" .
 make -j4
 rm subconverter.exe
 # shellcheck disable=SC2046
-g++ $(find CMakeFiles/subconverter.dir/src -name "*.obj") curl/lib/libcurl.a -o base/subconverter.exe -static -lbcrypt -lpcre2-8 -l:quickjs/libquickjs.a -llibcron -lyaml-cpp -liphlpapi -lcrypt32 -lws2_32 -lwsock32 -lz -s
+g++ $(find CMakeFiles/subconverter.dir/src -name "*.obj") -lcurl -lssl -lcrypto -o base/subconverter.exe -static -lbcrypt -lpcre2-8 -l:quickjs/libquickjs.a -llibcron -lyaml-cpp -liphlpapi -lcrypt32 -lws2_32 -lwsock32 -lz -s -L"$MINGW_PREFIX/lib" -I"$MINGW_PREFIX/include" -L"$MY_MINGW_PREFIX/lib" -I"$MY_MINGW_PREFIX/include"
 mv base subconverter
