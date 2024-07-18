@@ -2508,6 +2508,9 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json, std::vector
                 if (!x.TLSSecure && !x.Alpn.empty()) {
                     rapidjson::Value tls(rapidjson::kObjectType);
                     tls.AddMember("enabled", true, allocator);
+                    if(!scv.is_undef()){
+                        tls.AddMember("insecure", buildBooleanValue(scv), allocator);
+                    }
                     if (!x.ServerName.empty())
                         tls.AddMember("server_name", rapidjson::StringRef(x.ServerName.c_str()), allocator);
                     if (!x.Alpn.empty()) {
