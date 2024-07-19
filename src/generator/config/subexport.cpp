@@ -236,7 +236,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
         tribool tfo = ext.tfo;
         udp.define(x.UDP);
         xudp.define(x.XUDP);
-        scv = x.AllowInsecure;
+        scv.define(x.AllowInsecure);
         tfo.define(x.TCPFastOpen);
         singleproxy["name"] = x.Remark;
         singleproxy["server"] = x.Hostname;
