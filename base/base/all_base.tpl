@@ -66,6 +66,10 @@ dns:
     "geosite:private,cn,geolocation-cn":
       - https://1.12.12.12/dns-query
       - https://223.5.5.5/dns-query
+    "geosite:category-ads-all": rcode://success # 新添加的规则
+
+
+
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
