@@ -18,6 +18,11 @@ geox-url:
   mmdb: "https://cdn.jsdelivr.net/gh/Hackl0us/GeoIP2-CN@release/Country.mmdb"
 geo-auto-update: true  # 是否自动更新 geodata
 geo-update-interval: 48 # 更新间隔，单位：小时
+ipv6: true # 开启 IPv6 总开关，关闭阻断所有 IPv6 链接和屏蔽 DNS 请求 AAAA 记录
+profile: # 存储 select 选择记录
+  store-selected: true
+  # 持久化 fake-ip
+  store-fake-ip: true
 #################### 域名嗅探 ####################
 sniffer:
   enable: true # 是否启用,可选 true/false
@@ -43,7 +48,7 @@ sniffer:
 dns:
   enable: true
   listen: :7874
-  ipv6: false
+  ipv6: true
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.0/15
   fake-ip-filter:
