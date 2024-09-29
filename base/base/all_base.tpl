@@ -1,10 +1,11 @@
 {% if request.target == "clash" or request.target == "clashr" %}
-port: {{ default(global.clash.http_port, "7890") }}
+port: {{ default(global.clash.http_port, "9890") }}
 socks-port: {{ default(global.clash.socks_port, "7891") }}
 allow-lan: {{ default(global.clash.allow_lan, "true") }}
 mode: rule
 log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: :9090
+secret: 'HJKD27LS1tkL!'
 find-process-mode: strict # 进程模式 off / strict / always
 global-client-fingerprint: chrome
 tcp-concurrent: true # TCP 并发 如果域名解析结果对应多个IP,并发请求所有IP,选择握手最快的IP进行通讯
