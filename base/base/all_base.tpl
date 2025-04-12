@@ -1,16 +1,81 @@
 {% if request.target == "clash" or request.target == "clashr" %}
-
-port: {{ default(global.clash.http_port, "7890") }}
+port: {{ default(global.clash.http_port, "9890") }}
 socks-port: {{ default(global.clash.socks_port, "7891") }}
 allow-lan: {{ default(global.clash.allow_lan, "true") }}
-mode: Rule
+mode: rule
 log-level: {{ default(global.clash.log_level, "info") }}
-external-controller: {{ default(global.clash.external_controller, "127.0.0.1:9090") }}
-{% if default(request.clash.dns, "") == "1" %}
+external-controller: :9090
+secret: 'HJKD27LS1tkL!'
+find-process-mode: strict # 进程模式 off / strict / always
+global-client-fingerprint: chrome
+tcp-concurrent: true # TCP 并发 如果域名解析结果对应多个IP,并发请求所有IP,选择握手最快的IP进行通讯
+keep-alive-interval: 30 # TCP Keep Alive 间隔,单位分钟 | 控制 Clash 发出 TCP Keep Alive 包的间隔,减少移动设备耗电问题的临时措施
+#自定义 geodata url
+geodata-mode: false # GEOIP 数据模式,更改 geoip 使用文件,mmdb 或者 dat,可选,true 为 dat
+geodata-loader: memconservative # GEO 文件加载模式 standard / memconservative
+geox-url:
+  geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
+  geosite: "https://cdn.jsdelivr.net/gh/Jacky-Bruse/v2ray-rules-dat@release/geosite.dat"
+  mmdb: "https://cdn.jsdelivr.net/gh/Hackl0us/GeoIP2-CN@release/Country.mmdb"
+geo-auto-update: true  # 是否自动更新 geodata
+geo-update-interval: 48 # 更新间隔，单位：小时
+ipv6: true # 开启 IPv6 总开关，关闭阻断所有 IPv6 链接和屏蔽 DNS 请求 AAAA 记录
+profile: # 存储 select 选择记录
+  store-selected: true
+  # 持久化 fake-ip
+  store-fake-ip: true
+#################### 域名嗅探 ####################
+sniffer:
+  enable: true # 是否启用,可选 true/false
+  force-dns-mapping: true # 对 redir-host 类型识别的流量进行强制嗅探
+  parse-pure-ip: true # 对所有未获取到域名的流量进行强制嗅探
+  override-destination: true # 是否使用嗅探结果作为实际访问,默认为 true
+  sniff:
+    QUIC:
+      ports: [443, 8443]
+    TLS: # TLS 默认如果不配置 ports 默认嗅探 443
+      ports: [443, 8443]
+    HTTP:
+      ports: [80, 8080-8880]
+      override-destination: true # 可覆盖 sniffer.override-destination
+  force-domain:
+    - "+.v2ex.com"
+    - "+.chatgpt.com"
+    - "chat.openai.com"
+    - "+.openai.com" # 包含所有openai.com的子域名
+  skip-domain: # 需要跳过嗅探的域名,主要解决部分站点sni字段非域名,导致嗅探结果异常的问题,如米家设备
+    - "Mijia Cloud"
+
 dns:
   enable: true
-  listen: :1053
-{% endif %}
+  listen: :7874
+  ipv6: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.0/15
+  fake-ip-filter:
+    - "*"
+    - "+.*"
+    - "+.lan"
+    - "+.local"
+  respect-rules: true
+  default-nameserver:
+    - tls://223.5.5.5:853
+    - tls://1.12.12.12:853
+  proxy-server-nameserver:
+    - https://223.5.5.5/dns-query
+    - https://1.12.12.12/dns-query
+  nameserver:
+    - https://dns.cloudflare.com/dns-query
+    - https://dns.google/dns-query
+  nameserver-policy:
+    "geosite:private,cn,geolocation-cn":
+      - https://1.12.12.12/dns-query
+      - https://223.5.5.5/dns-query
+    "geosite:category-ads-all": rcode://success # 新添加的规则
+
+
+
+
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
 proxy-groups: ~
@@ -20,8 +85,8 @@ Proxy: ~
 Proxy Group: ~
 Rule: ~
 {% endif %}
-
 {% endif %}
+
 {% if request.target == "surge" %}
 
 [General]
@@ -378,16 +443,7 @@ enhanced-mode-by-rule = true
         "rules": [],
         "auto_detect_interface": true
     },
-    "experimental": {
-        "cache_file": {
-            "enabled": true,
-            "store_fakeip": true
-        },
-        "clash_api": {
-            "external_controller": "{{ default(global.clash.external_controller, "127.0.0.1:9090") }}",
-            "external_ui": "dashboard"
-        }
-    }
+    "experimental": {}
 }
 
 {% endif %}
