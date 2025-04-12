@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  REGISTRY_IMAGE: leejacky/subebhind
+  REGISTRY_IMAGE: leejacky/subbehind
 
 jobs:
   build:
