@@ -45,18 +45,16 @@ sniffer:
     - "+.openai.com" # 包含所有openai.com的子域名
   skip-domain: # 需要跳过嗅探的域名,主要解决部分站点sni字段非域名,导致嗅探结果异常的问题,如米家设备
     - "Mijia Cloud"
-
 dns:
   enable: true
   listen: :7874
   ipv6: true
-  enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.0/15
   fake-ip-filter:
     - "*"
-    - "+.*"
-    - "+.lan"
-    - "+.local"
+    - +.*
+    - +.lan
+    - +.local
   respect-rules: true
   default-nameserver:
     - tls://223.5.5.5:853
@@ -68,13 +66,10 @@ dns:
     - https://dns.cloudflare.com/dns-query
     - https://dns.google/dns-query
   nameserver-policy:
-    "geosite:private,cn,geolocation-cn":
+    geosite:private,cn,geolocation-cn:
       - https://1.12.12.12/dns-query
       - https://223.5.5.5/dns-query
-    "geosite:category-ads-all": rcode://success # 新添加的规则
-
-
-
+    geosite:category-ads-all: rcode://success
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
