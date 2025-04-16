@@ -50,7 +50,7 @@ dns:
   listen: :7874
   ipv6: true
   enhanced-mode: redir-host
-  respect-rules: true
+  respect-rules: false
   default-nameserver:
     - tls://223.5.5.5:853
     - tls://1.12.12.12:853
@@ -69,10 +69,16 @@ dns:
     - tls://8.8.8.8:853
     - https://cloudflare-dns.com/dns-query
   fallback-filter:
-    geoip: !cn
+    geoip: true
+    geoip-code: CN
+    geosite:
+      - gfw
     ipcidr:
       - 240.0.0.0/4
-      - 0.0.0.0/32
+    domain:
+      - '+.google.com'
+      - '+.facebook.com'
+      - '+.youtube.com'
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
