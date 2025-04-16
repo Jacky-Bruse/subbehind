@@ -23,7 +23,7 @@ ipv6: true # 开启 IPv6 总开关，关闭阻断所有 IPv6 链接和屏蔽 DNS
 profile: # 存储 select 选择记录
   store-selected: true
   # 持久化 fake-ip
-  store-fake-ip: true
+  store-fake-ip: false
 #################### 域名嗅探 ####################
 sniffer:
   enable: true # 是否启用,可选 true/false
@@ -49,12 +49,7 @@ dns:
   enable: true
   listen: :7874
   ipv6: true
-  fake-ip-range: 198.18.0.0/15
-  fake-ip-filter:
-    - "*"
-    - +.*
-    - +.lan
-    - +.local
+  enhanced-mode: redir-host
   respect-rules: true
   default-nameserver:
     - tls://223.5.5.5:853
@@ -70,6 +65,14 @@ dns:
       - https://1.12.12.12/dns-query
       - https://223.5.5.5/dns-query
     geosite:category-ads-all: rcode://success
+  fallback:
+    - tls://8.8.8.8:853
+    - https://cloudflare-dns.com/dns-query
+  fallback-filter:
+    geoip: !cn
+    ipcidr:
+      - 240.0.0.0/4
+      - 0.0.0.0/32
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
