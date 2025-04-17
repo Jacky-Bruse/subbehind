@@ -24,7 +24,8 @@ enum class ProxyType
     VLESS,
     Hysteria,
     Hysteria2,
-    TUIC
+    TUIC,
+    AnyTLS
 };
 
 inline String getProxyTypeName(ProxyType type) {
@@ -55,6 +56,8 @@ inline String getProxyTypeName(ProxyType type) {
             return "Hysteria2";
         case ProxyType::TUIC:
             return "Tuic";
+        case ProxyType::AnyTLS:
+            return "AnyTLS";
         default:
             return "Unknown";
     }
@@ -83,7 +86,9 @@ struct Proxy {
     String TransferProtocol;
     String FakeType;
     String AuthStr;
-
+    uint16_t IdleSessionCheckInterval=30;
+    uint16_t IdleSessionTimeout=30;
+    uint16_t MinIdleSession=0;
     bool TLSSecure = false;
 
     String Host;
@@ -151,5 +156,5 @@ struct Proxy {
 #define HYSTERIA_DEFAULT_GROUP "HysteriaProvider"
 #define HYSTERIA2_DEFAULT_GROUP "Hysteria2Provider"
 #define TUIC_DEFAULT_GROUP "TuicProvider"
-
+#define ANYTLS_DEFAULT_GROUP "AnyTLSProvider"
 #endif // PROXY_H_INCLUDED

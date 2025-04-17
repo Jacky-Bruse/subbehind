@@ -551,6 +551,28 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["congestion-controller"] = x.CongestionControl;
                 }
                 break;
+            case ProxyType::AnyTLS:
+                singleproxy["type"] = "anytls";
+                if (!x.Password.empty()) {
+                    singleproxy["password"] = x.Password;
+                }
+                if (!x.Fingerprint.empty()) {
+                    singleproxy["client-fingerprint"] = x.Fingerprint;
+                }
+                if (!udp.is_undef()) {
+                    singleproxy["udp"] = udp.get();
+                }
+                if (!x.ServerName.empty()) {
+                    singleproxy["sni"] = x.SNI;
+                }
+                if (!scv.is_undef())
+                    singleproxy["skip-cert-verify"] = scv.get();
+                if (!x.AlpnList.empty()) {
+                    for (auto &item: x.AlpnList) {
+                        singleproxy["alpn"].push_back(item);
+                    }
+                }
+                break;
             case ProxyType::VLESS:
                 singleproxy["type"] = "vless";
                 singleproxy["uuid"] = x.UserId;
@@ -637,7 +659,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
         // sees in https://dreamacro.github.io/clash/configuration/outbound.html#snell
         if (udp && x.Type != ProxyType::Snell && x.Type != ProxyType::TUIC)
             singleproxy["udp"] = true;
-        if(proxy_block)
+        if (proxy_block)
             singleproxy.SetStyle(YAML::EmitterStyle::Block);
         else
             singleproxy.SetStyle(YAML::EmitterStyle::Flow);
@@ -646,7 +668,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
         nodelist.emplace_back(x);
     }
 
-    if(proxy_compact)
+    if (proxy_compact)
         proxies.SetStyle(YAML::EmitterStyle::Flow);
 
     if (ext.nodelist) {
@@ -662,8 +684,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
         yamlnode["Proxy"] = proxies;
 
 
-    for(const ProxyGroupConfig &x : extra_proxy_group)
-    {
+    for (const ProxyGroupConfig &x: extra_proxy_group) {
         YAML::Node singlegroup;
         string_array filtered_nodelist;
 
@@ -673,67 +694,63 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
         else
             singlegroup["type"] = x.TypeStr();
 
-        switch(x.Type)
-        {
-        case ProxyGroupType::Select:
-        case ProxyGroupType::Relay:
-            break;
-        case ProxyGroupType::LoadBalance:
-            singlegroup["strategy"] = x.StrategyStr();
-            [[fallthrough]];
-        case ProxyGroupType::Smart:
-            [[fallthrough]];
-        case ProxyGroupType::URLTest:
-            if(!x.Lazy.is_undef())
-                singlegroup["lazy"] = x.Lazy.get();
-            [[fallthrough]];
-        case ProxyGroupType::Fallback:
-            singlegroup["url"] = x.Url;
-            if(x.Interval > 0)
-                singlegroup["interval"] = x.Interval;
-            if(x.Tolerance > 0)
-                singlegroup["tolerance"] = x.Tolerance;
-            break;
-        default:
-            continue;
+        switch (x.Type) {
+            case ProxyGroupType::Select:
+            case ProxyGroupType::Relay:
+                break;
+            case ProxyGroupType::LoadBalance:
+                singlegroup["strategy"] = x.StrategyStr();
+                [[fallthrough]];
+            case ProxyGroupType::Smart:
+                [[fallthrough]];
+            case ProxyGroupType::URLTest:
+                if (!x.Lazy.is_undef())
+                    singlegroup["lazy"] = x.Lazy.get();
+                [[fallthrough]];
+            case ProxyGroupType::Fallback:
+                singlegroup["url"] = x.Url;
+                if (x.Interval > 0)
+                    singlegroup["interval"] = x.Interval;
+                if (x.Tolerance > 0)
+                    singlegroup["tolerance"] = x.Tolerance;
+                break;
+            default:
+                continue;
         }
-        if(!x.DisableUdp.is_undef())
+        if (!x.DisableUdp.is_undef())
             singlegroup["disable-udp"] = x.DisableUdp.get();
 
-        for(const auto& y : x.Proxies)
+        for (const auto &y: x.Proxies)
             groupGenerate(y, nodelist, filtered_nodelist, true, ext);
 
-        if(!x.UsingProvider.empty())
+        if (!x.UsingProvider.empty())
             singlegroup["use"] = x.UsingProvider;
-        else
-        {
-            if(filtered_nodelist.empty())
+        else {
+            if (filtered_nodelist.empty())
                 filtered_nodelist.emplace_back("DIRECT");
         }
-        if(!filtered_nodelist.empty())
+        if (!filtered_nodelist.empty())
             singlegroup["proxies"] = filtered_nodelist;
-        if(group_block)
+        if (group_block)
             singlegroup.SetStyle(YAML::EmitterStyle::Block);
         else
             singlegroup.SetStyle(YAML::EmitterStyle::Flow);
 
         bool replace_flag = false;
-        for(auto && original_group : original_groups)
-        {
-            if(original_group["name"].as<std::string>() == x.Name)
-            {
+        for (auto &&original_group: original_groups) {
+            if (original_group["name"].as<std::string>() == x.Name) {
                 original_group.reset(singlegroup);
                 replace_flag = true;
                 break;
             }
         }
-        if(!replace_flag)
+        if (!replace_flag)
             original_groups.push_back(singlegroup);
     }
-    if(group_compact)
+    if (group_compact)
         original_groups.SetStyle(YAML::EmitterStyle::Flow);
 
-    if(ext.clash_new_field_name)
+    if (ext.clash_new_field_name)
         yamlnode["proxy-groups"] = original_groups;
     else
         yamlnode["Proxy Group"] = original_groups;
