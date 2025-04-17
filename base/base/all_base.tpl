@@ -47,12 +47,11 @@ sniffer:
     - "Mijia Cloud"
 dns:
   enable: true
-  cache-algorithm: arc  # 自适应替换缓存算法，比默认的LRU更高效
   prefer-h3: false  # 对DoH服务器使用HTTP/3提高性能
   listen: :7874
   ipv6: true
   enhanced-mode: redir-host
-  respect-rules: false
+  respect-rules: true
   default-nameserver:
     - tls://223.5.5.5:853
     - tls://1.12.12.12:853
