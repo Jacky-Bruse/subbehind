@@ -95,7 +95,13 @@ void tuicConstruct(Proxy &node, const std::string &group, const std::string &rem
                    tribool udp = tribool(), tribool tfo = tribool(),
                    tribool scv = tribool(), tribool reduceRtt = tribool(), tribool disableSni = tribool(),
                    uint16_t request_timeout = 15000,const std::string& underlying_proxy="");
-
+void mieruConstruct(Proxy &node, const std::string &group, const std::string &remarks,
+                    const std::string &port, const std::string &password,
+                    const std::string &host, const std::string &ports,
+                    const std::string &username,const std::string &multiplexing,
+                    const std::string &transfer_protocol, tribool udp,
+                    tribool tfo, tribool scv,
+                    tribool tls13, const std::string &underlying_proxy);
 void explodeVmess(std::string vmess, Proxy &node);
 
 void explodeSSR(std::string ssr, Proxy &node);
@@ -105,11 +111,11 @@ void explodeSS(std::string ss, Proxy &node);
 void explodeTrojan(std::string trojan, Proxy &node);
 
 void explodeQuan(const std::string &quan, Proxy &node);
-
+void explodeMierus(std::string mieru, Proxy &node);
 void explodeStdVMess(std::string vmess, Proxy &node);
 
 void explodeStdVless(std::string vless, Proxy &node);
-
+void explodeStdMieru(std::string mieru, Proxy &node);
 void explodeStdHysteria(std::string hysteria, Proxy &node);
 
 void explodeStdHysteria2(std::string hysteria2, Proxy &node);
