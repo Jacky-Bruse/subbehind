@@ -47,7 +47,7 @@ sniffer:
     - "Mijia Cloud"
 dns:
   enable: true
-  prefer-h3: false  # 对DoH服务器使用HTTP/3提高性能
+  prefer-h3: true  # 对DoH服务器使用HTTP/3提高性能
   listen: :7874
   ipv6: true
   enhanced-mode: redir-host
