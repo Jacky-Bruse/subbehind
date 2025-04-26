@@ -59,8 +59,8 @@ dns:
     - https://223.5.5.5/dns-query
     - https://1.12.12.12/dns-query
   nameserver:
-    - https://dns.cloudflare.com/dns-query
-    - https://dns.google/dns-query
+      - https://dns.cloudflare.com/dns-query#DNS
+    - https://dns.google/dns-query#DNS
   nameserver-policy:
     geosite:private,cn,geolocation-cn:
       - https://1.12.12.12/dns-query
@@ -70,9 +70,9 @@ dns:
     - system
   direct-nameserver-follow-policy: false
   fallback:
-    - https://dns.google/dns-query
-    - tls://8.8.8.8:853
-    - https://cloudflare-dns.com/dns-query
+    - https://dns.google/dns-query#DNS
+    - tls://8.8.8.8:853#DNS
+    - https://cloudflare-dns.com/dns-query#DNS
   fallback-filter:
     geoip: true
     geoip-code: CN
