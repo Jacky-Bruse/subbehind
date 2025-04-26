@@ -70,6 +70,7 @@ dns:
     - system
   direct-nameserver-follow-policy: false
   fallback:
+    - https://dns.google/dns-query
     - tls://8.8.8.8:853
     - https://cloudflare-dns.com/dns-query
   fallback-filter:
