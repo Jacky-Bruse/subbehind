@@ -1399,6 +1399,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                           : safe_as<std::string>(
                               singleproxy["servername"]);
                 switch (hash_(net)) {
+                    case "tcp"_hash:
                     case "http"_hash:
                         singleproxy["http-opts"]["path"][0] >>= path;
                         singleproxy["http-opts"]["headers"]["Host"][0] >>= host;

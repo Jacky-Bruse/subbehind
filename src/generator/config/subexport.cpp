@@ -37,6 +37,15 @@ const string_array clash_ssr_ciphers = {
     "rc4-md5", "aes-128-ctr", "aes-192-ctr", "aes-256-ctr", "aes-128-cfb",
     "aes-192-cfb", "aes-256-cfb", "chacha20-ietf", "xchacha20", "none"
 };
+bool isNumeric(const std::string &str) {
+    for (char c: str) {
+        if (!std::isdigit(static_cast<unsigned char>(c))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 
 std::string
 vmessLinkConstruct(const std::string &remarks, const std::string &add, const std::string &port, const std::string &type,
@@ -930,6 +939,7 @@ std::string proxyToSurge(std::vector<Proxy> &nodes, const std::string &base_conf
 
         std::string proxy, section, real_section;
         string_array args, headers;
+        std::string search = " Mbps";
 
         switch (x.Type) {
             case ProxyType::Shadowsocks:
@@ -1058,9 +1068,16 @@ std::string proxyToSurge(std::vector<Proxy> &nodes, const std::string &base_conf
             case ProxyType::Hysteria2:
                 if (surge_ver < 4)
                     continue;
-                proxy = "hysteria, " + hostname + ", " + port + ", password=" + password;
-                if (x.DownSpeed)
-                    proxy += ", download-bandwidth=" + x.DownSpeed;
+                proxy = "hysteria2, " + hostname + ", " + port + ", password=" + password;
+                if (!x.DownMbps.empty()) {
+                    if (!isNumeric(x.DownMbps)) {
+                        size_t pos = x.DownMbps.find(search);
+                        if (pos != std::string::npos) {
+                            x.DownMbps.replace(pos, search.length(), "");
+                        }
+                    }
+                    proxy += ", download-bandwidth=" +x.DownMbps;
+                }
 
                 if (!scv.is_undef())
                     proxy += ",skip-cert-verify=" + std::string(scv.get() ? "true" : "false");
@@ -2515,15 +2532,6 @@ vectorToJsonArray(const std::vector<std::string> &array, rapidjson::MemoryPoolAl
     for (const auto &x: array)
         result.PushBack(rapidjson::Value(trim(x).c_str(), allocator), allocator);
     return result;
-}
-
-bool isNumeric(const std::string &str) {
-    for (char c: str) {
-        if (!std::isdigit(static_cast<unsigned char>(c))) {
-            return false;
-        }
-    }
-    return true;
 }
 
 void
