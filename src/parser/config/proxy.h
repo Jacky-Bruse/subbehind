@@ -145,6 +145,7 @@ struct Proxy {
     std::vector<String> AlpnList;
     String PacketEncoding;
     String Multiplexing;
+    tribool V2rayHttpUpgrade;
 };
 
 #define SS_DEFAULT_GROUP "SSProvider"

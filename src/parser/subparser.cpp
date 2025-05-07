@@ -223,7 +223,7 @@ void mieruConstruct(Proxy &node, const std::string &group, const std::string &re
     node.Host = trim(host);
     node.Password = password;
     node.Ports = ports;
-    node.TransferProtocol = transfer_protocol.empty()? "TCP" : trim(transfer_protocol);
+    node.TransferProtocol = transfer_protocol.empty() ? "TCP" : trim(transfer_protocol);
     node.Username = username;
     node.Multiplexing = multiplexing.empty() ? "MULTIPLEXING_LOW" : trim(multiplexing);
 }
@@ -235,7 +235,7 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
                     const std::string &pbk, const std::string &sid, const std::string &fp, const std::string &sni,
                     const std::vector<std::string> &alpnList, const std::string &packet_encoding,
                     tribool udp, tribool tfo,
-                    tribool scv, tribool tls13, const std::string &underlying_proxy) {
+                    tribool scv, tribool tls13, const std::string &underlying_proxy, tribool v2ray_http_upgrade) {
     commonConstruct(node, ProxyType::VLESS, group, remarks, add, port, udp, tfo, scv, tls13, underlying_proxy);
     node.UserId = id.empty() ? "00000000-0000-0000-0000-000000000000" : id;
     node.AlterId = to_int(aid);
@@ -265,6 +265,7 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
         default:
             node.Host = (host.empty() && !isIPv4(add) && !isIPv6(add)) ? add.data() : trim(host);
             node.Path = path.empty() ? "/" : urlDecode(trim(path));
+            node.V2rayHttpUpgrade = v2ray_http_upgrade;
             break;
     }
 }
@@ -955,14 +956,14 @@ void explodeMierus(std::string mierus, Proxy &node) {
     if (strFind(mierus, "mierus://")) {
         if (regMatch(mierus, "mierus://(.*?)@(.*)")) {
             explodeStdMieru(mierus.substr(9), node);
-        }else {
+        } else {
             mierus = urlSafeBase64Decode(mierus.substr(9));
             explodeStdMieru("mierus://" + mierus, node);
         }
-    }else if(strFind(mierus, "mieru://")) {
+    } else if (strFind(mierus, "mieru://")) {
         if (regMatch(mierus, "mierus://(.*?)@(.*)")) {
             explodeStdMieru(mierus.substr(8), node);
-        }else {
+        } else {
             mierus = urlSafeBase64Decode(mierus.substr(8));
             explodeStdMieru("mierus://" + mierus, node);
         }
@@ -1178,7 +1179,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
         string_array dns_server;
         std::vector<String> alpns;
         String alpn2;
-        std::string fingerprint, multiplexing, transfer_protocol;
+        std::string fingerprint, multiplexing, transfer_protocol, v2ray_http_upgrade;
         tribool udp, tfo, scv;
         bool reduceRtt, disableSni; //tuic
         std::vector<std::string> alpnList;
@@ -1390,7 +1391,6 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 break;
             case "vless"_hash:
                 group = XRAY_DEFAULT_GROUP;
-
                 singleproxy["uuid"] >>= id;
                 singleproxy["alterId"] >>= aid;
                 net = singleproxy["network"].IsDefined() ? safe_as<std::string>(singleproxy["network"]) : "tcp";
@@ -1413,6 +1413,9 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                                        : "/";
                             singleproxy["ws-opts"]["headers"]["Host"] >>= host;
                             singleproxy["ws-opts"]["headers"]["Edge"] >>= edge;
+                            if (singleproxy["ws-opts"]["v2ray-http-upgrade"].IsDefined()) {
+                                v2ray_http_upgrade = safe_as<std::string>(singleproxy["ws-opts"]["v2ray-http-upgrade"]);
+                            }
                         } else {
                             path = singleproxy["ws-path"].IsDefined()
                                        ? safe_as<std::string>(singleproxy["ws-path"])
@@ -1420,6 +1423,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                             singleproxy["ws-headers"]["Host"] >>= host;
                             singleproxy["ws-headers"]["Edge"] >>= edge;
                         }
+
                         break;
                     case "h2"_hash:
                         singleproxy["h2-opts"]["path"] >>= path;
@@ -1451,7 +1455,8 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 bool vless_udp;
                 singleproxy["udp"] >> vless_udp;
                 vlessConstruct(node, XRAY_DEFAULT_GROUP, ps, server, port, type, id, aid, net, "auto", flow, mode, path,
-                               host, "", tls, pbk, sid, fp, sni, alpnList, packet_encoding, udp);
+                               host, "", tls, pbk, sid, fp, sni, alpnList, packet_encoding, udp, tribool(), tribool(),
+                               tribool(), "", v2ray_http_upgrade);
                 break;
             case "hysteria"_hash:
                 group = HYSTERIA_DEFAULT_GROUP;
