@@ -37,14 +37,25 @@ std::map<std::string, std::string> parsedMD5;
 std::string modSSMD5 = "f7653207090ce3389115e9c88541afe0";
 
 //remake from speedtestutil
+std::string removeBrackets(const std::string& input) {
+    std::string result = input;
+    size_t left = result.find('[');
+    size_t right = result.find(']');
 
+    if (left != std::string::npos && right != std::string::npos && right > left) {
+        result.erase(right, 1); // 删除 ']'
+        result.erase(left, 1);  // 删除 '['
+    }
+
+    return result;
+}
 void commonConstruct(Proxy &node, ProxyType type, const std::string &group, const std::string &remarks,
                      const std::string &server, const std::string &port, const tribool &udp, const tribool &tfo,
                      const tribool &scv, const tribool &tls13, const std::string &underlying_proxy) {
     node.Type = type;
     node.Group = group;
     node.Remark = remarks;
-    node.Hostname = server;
+    node.Hostname = removeBrackets(server);
     node.Port = to_int(port);
     node.UDP = udp;
     node.TCPFastOpen = tfo;
@@ -1792,6 +1803,12 @@ void explodeStdVless(std::string vless, Proxy &node) {
         case "tcp"_hash:
         case "ws"_hash:
         case "h2"_hash:
+            type = getUrlArg(addition, "headerType");
+            host = getUrlArg(addition, strFind(addition, "sni") ? "sni" : "host");
+            path = getUrlArg(addition, "path");
+            break;
+        case "xhttp"_hash: // 新增对 type=xhttp 的支持
+            net = "h2"; // 视为 h2/http2 传输
             type = getUrlArg(addition, "headerType");
             host = getUrlArg(addition, strFind(addition, "sni") ? "sni" : "host");
             path = getUrlArg(addition, "path");

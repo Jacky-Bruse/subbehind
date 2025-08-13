@@ -1088,6 +1088,8 @@ std::string proxyToSurge(std::vector<Proxy> &nodes, const std::string &base_conf
                     proxy += ",server-cert-fingerprint-sha256=" + x.Fingerprint;
                 if (!x.ServerName.empty())
                     proxy += ",sni=" + x.ServerName;
+                if (!x.Ports.empty())
+                    proxy += ",port-hopping=" + x.Ports;
                 break;
             case ProxyType::WireGuard:
                 if (surge_ver < 4 && surge_ver != -3)
@@ -1296,8 +1298,13 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                ? "00000000-0000-0000-0000-000000000000"
                                : id) + "@" + hostname + ":" + port+"?";
                 if (!tls.empty()) {
-                    proxyStr += "&security=" + tls;
+                    if (!pbk.empty()) {
+                        proxyStr += "&security=reality";
+                    }else {
+                        proxyStr += "&security=" + tls;
+                    }
                 }
+
                 if (!flow.empty()) {
                     proxyStr += "&flow=" + flow;
                 }
@@ -2253,18 +2260,30 @@ proxyToLoon(std::vector<Proxy> &nodes, const std::string &base_conf,
                 break;
             case ProxyType::VLESS:
                 if (flow != "xtls-rprx-vision") {
-                    continue;
+                    if (transproto == "ws") {
+                        proxy = "VLESS," + hostname + "," + port + ",\"" + id + "\"" +
+                            ",path=" + path + ",host=" + host + ",transport=" + transproto +
+                            ",udp=" + (udp.get() ? "true" : "false") + ",over-tls=" + (
+                                tlssecure ? "true" : "false") + ",sni=" + sni;
+                    } else {
+                        continue;
+                    }
+                } else {
+                    proxy = "VLESS," + hostname + "," + port + ",\"" + id + "\",flow=" + flow + ",public-key=\"" + pk +
+                            "\",short-id=" + shortId + ",udp=" + (udp.get() ? "true" : "false") + ",over-tls=" + (
+                                tlssecure ? "true" : "false") + ",sni=" + sni;
                 }
-                proxy = "VLESS," + hostname + "," + port + ",\"" + id + "\",flow=" + flow + ",public-key=\"" + pk +
-                        "\",short-id=" + shortId + ",udp=" + (udp.get() ? "true" : "false") + ",over-tls=" + (
-                            tlssecure ? "true" : "false") + ",sni=" + sni;
 
                 switch (hash_(transproto)) {
                     case "tcp"_hash:
                         proxy += ",transport=tcp";
                         break;
                     default:
-                        continue;
+                        if (transproto != "ws") {
+                            continue;
+                        } else {
+                            break;;
+                        }
                 }
                 if (!scv.is_undef())
                     proxy += ",skip-cert-verify=" + std::string(scv.get() ? "true" : "false");
@@ -2858,7 +2877,7 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json,
                     rapidjson::Value utls(rapidjson::kObjectType);
                     utls.AddMember("enabled", true, allocator);
                     utls.AddMember("fingerprint", rapidjson::StringRef(x.Fingerprint.c_str()), allocator);
-                    proxy.AddMember("utls", utls, allocator);
+                    tls.AddMember("utls", utls, allocator);
                 }
                 proxy.AddMember("tls", tls, allocator);
                 break;

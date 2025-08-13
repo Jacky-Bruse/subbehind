@@ -8,8 +8,10 @@ WORKDIR /
 RUN set -xe && \
     apk add --no-cache --virtual .build-tools git g++ build-base linux-headers cmake python3 && \
     apk add --no-cache --virtual .build-deps curl-dev rapidjson-dev pcre2-dev yaml-cpp-dev && \
-    git clone https://github.com/ftk/quickjspp --depth=1 && \
+    git clone --no-checkout https://github.com/ftk/quickjspp.git && \
     cd quickjspp && \
+    git fetch origin 0c00c48895919fc02da3f191a2da06addeb07f09 && \
+    git checkout 0c00c48895919fc02da3f191a2da06addeb07f09 && \
     git submodule update --init && \
     cmake -DCMAKE_BUILD_TYPE=Release . && \
     make quickjs -j $THREADS && \
