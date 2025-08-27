@@ -130,6 +130,8 @@ void explodeHysteria(std::string hysteria, Proxy &node);
 
 void explodeHysteria2(std::string hysteria2, Proxy &node);
 
+void explodeAnyTLS(std::string anytls, Proxy &node);
+
 /// Parse a link
 void explode(const std::string &link, Proxy &node);
 

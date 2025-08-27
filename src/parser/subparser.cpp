@@ -943,6 +943,11 @@ void explodeTrojan(std::string trojan, Proxy &node) {
         network = "ws";
     }
 
+    else if (getUrlArg(addition, "type") == "grpc") {  
+        path = getUrlArg(addition, "serviceName");  
+        network = "grpc";  
+    }
+    
     if (remark.empty())
         remark = server + ":" + port;
     if (group.empty())
@@ -3171,6 +3176,61 @@ void explodeTuic(const std::string &tuic, Proxy &node) {
     return;
 }
 
+void explodeAnyTLS(std::string anytls, Proxy &node) {
+    std::string add, port, password, remarks, addition, sni, fp;
+    std::vector<std::string> alpnList;
+    tribool udp, tfo, scv;
+    anytls = anytls.substr(9);
+    string_size pos;
+
+    pos = anytls.rfind("#");
+    if (pos != anytls.npos) {
+        remarks = urlDecode(anytls.substr(pos + 1));
+        anytls.erase(pos);
+    }
+
+    pos = anytls.rfind("?");
+    if (pos != anytls.npos) {
+        addition = anytls.substr(pos + 1);
+        anytls.erase(pos);
+    }
+
+    pos = anytls.find("@");
+    if (pos != anytls.npos) {
+        password = anytls.substr(0, pos);
+        anytls = anytls.substr(pos + 1);
+    }
+
+    pos = anytls.find(":");
+    if (pos != anytls.npos) {
+        add = anytls.substr(0, pos);
+        port = anytls.substr(pos + 1);
+    }
+
+    if (remarks.empty())
+        remarks = add + ":" + port;
+
+    std::string alpn = getUrlArg(addition, "alpn");
+    if (!alpn.empty()) {
+        auto alpns = split(alpn, ",");
+        for (auto &item : alpns) {
+            if (!item.empty())
+                alpnList.emplace_back(item);
+        }
+    }
+
+    fp = getUrlArg(addition, "fp");
+    if (fp.empty())
+        fp = getUrlArg(addition, "fingerprint");
+    sni = getUrlArg(addition, "sni");
+    udp = getUrlArg(addition, "udp");
+    tfo = getUrlArg(addition, "tfo");
+    scv = getUrlArg(addition, "insecure");
+
+    anyTlSConstruct(node, ANYTLS_DEFAULT_GROUP, remarks, port, password, add, alpnList, fp, sni, udp, tfo, scv,
+                    tribool(), "", 30, 30, 0);
+}
+
 void explode(const std::string &link, Proxy &node) {
     if (startsWith(link, "ssr://"))
         explodeSSR(link, node);
@@ -3192,6 +3252,8 @@ void explode(const std::string &link, Proxy &node) {
         explodeHysteria(link, node);
     else if (strFind(link, "tuic://"))
         explodeTuic(link, node);
+    else if (strFind(link, "anytls://"))
+        explodeAnyTLS(link, node);
     else if (strFind(link, "hysteria2://") || strFind(link, "hy2://"))
         explodeHysteria2(link, node);
     else if (strFind(link, "mierus://") || strFind(link, "mieru://"))
