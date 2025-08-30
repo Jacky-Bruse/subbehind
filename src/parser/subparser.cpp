@@ -1236,6 +1236,9 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                                            singleproxy["ws-opts"]["path"])
                                        : "/";
                             singleproxy["ws-opts"]["headers"]["Host"] >>= host;
+                            if (host.empty()) {
+                                singleproxy["ws-opts"]["headers"]["host"] >>= host;
+                            }
                             singleproxy["ws-opts"]["headers"]["Edge"] >>= edge;
                         } else {
                             path = singleproxy["ws-path"].IsDefined()
@@ -1428,6 +1431,9 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                                            singleproxy["ws-opts"]["path"])
                                        : "/";
                             singleproxy["ws-opts"]["headers"]["Host"] >>= host;
+                            if (host.empty()) {
+                                singleproxy["ws-opts"]["headers"]["host"] >>= host;
+                            }
                             singleproxy["ws-opts"]["headers"]["Edge"] >>= edge;
                             if (singleproxy["ws-opts"]["v2ray-http-upgrade"].IsDefined()) {
                                 v2ray_http_upgrade = safe_as<std::string>(singleproxy["ws-opts"]["v2ray-http-upgrade"]);
