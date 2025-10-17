@@ -1,6 +1,7 @@
 {% if request.target == "clash" or request.target == "clashr" %}
 port: {{ default(global.clash.http_port, "9890") }}
 socks-port: {{ default(global.clash.socks_port, "7891") }}
+mixed-port: 7893       # 混合端口（HTTP+SOCKS），兼容多端
 allow-lan: {{ default(global.clash.allow_lan, "true") }}
 mode: rule
 log-level: {{ default(global.clash.log_level, "info") }}
@@ -10,84 +11,110 @@ find-process-mode: strict # 进程模式 off / strict / always
 global-client-fingerprint: chrome
 tcp-concurrent: true # TCP 并发 如果域名解析结果对应多个IP,并发请求所有IP,选择握手最快的IP进行通讯
 keep-alive-interval: 30 # TCP Keep Alive 间隔,单位分钟 | 控制 Clash 发出 TCP Keep Alive 包的间隔,减少移动设备耗电问题的临时措施
-#自定义 geodata url
-geodata-mode: false # GEOIP 数据模式,更改 geoip 使用文件,mmdb 或者 dat,可选,true 为 dat
-geodata-loader: memconservative # GEO 文件加载模式 standard / memconservative
+# ---- 内核优化参数 ----
+geodata-mode: false
+geodata-loader: memconservative
+geo-auto-update: true
+geo-update-interval: 48
+global-client-fingerprint: chrome
+
 geox-url:
-  geoip: "https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat"
-  geosite: "https://cdn.jsdelivr.net/gh/Jacky-Bruse/v2ray-rules-dat@release/geosite.dat"
-  mmdb: "https://cdn.jsdelivr.net/gh/Hackl0us/GeoIP2-CN@release/Country.mmdb"
-geo-auto-update: true  # 是否自动更新 geodata
-geo-update-interval: 48 # 更新间隔，单位：小时
-ipv6: true # 开启 IPv6 总开关，关闭阻断所有 IPv6 链接和屏蔽 DNS 请求 AAAA 记录
-profile: # 存储 select 选择记录
+  geoip: https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat
+  geosite: https://cdn.jsdelivr.net/gh/Jacky-Bruse/v2ray-rules-dat@release/geosite.dat
+  mmdb: https://cdn.jsdelivr.net/gh/Hackl0us/GeoIP2-CN@release/Country.mmdb
+
+ipv6: true
+
+# ---- Profile 管理 ----
+profile:
   store-selected: true
-  # 持久化 fake-ip
-  store-fake-ip: false
-#################### 域名嗅探 ####################
+  store-fake-ip: true  # ✅ 启用保存 Fake IP，避免重复生成
+
+# ---- Sniffer 自动识别域名 ----
 sniffer:
-  enable: true # 是否启用,可选 true/false
-  force-dns-mapping: true # 对 redir-host 类型识别的流量进行强制嗅探
-  parse-pure-ip: true # 对所有未获取到域名的流量进行强制嗅探
-  override-destination: true # 是否使用嗅探结果作为实际访问,默认为 true
+  enable: true
+  force-dns-mapping: true
+  parse-pure-ip: true
+  override-destination: true
   sniff:
     QUIC:
       ports: [443, 8443]
-    TLS: # TLS 默认如果不配置 ports 默认嗅探 443
+    TLS:
       ports: [443, 8443]
     HTTP:
       ports: [80, 8080-8880]
-      override-destination: true # 可覆盖 sniffer.override-destination
+      override-destination: true
   force-domain:
-    - "+.v2ex.com"
-    - "+.chatgpt.com"
-    - "chat.openai.com"
-    - "+.openai.com" # 包含所有openai.com的子域名
-  skip-domain: # 需要跳过嗅探的域名,主要解决部分站点sni字段非域名,导致嗅探结果异常的问题,如米家设备
-    - "Mijia Cloud"
+    - +.openai.com
+    - chat.openai.com
+    - +.chatgpt.com
+    - +.v2ex.com
+  skip-domain:
+    - Mijia Cloud
+
+# =========================================================
+# 🧩 DNS 模块：Fake-IP 增强模式 + DoH 防污染优化
+# =========================================================
 dns:
   enable: true
-  prefer-h3: true  # 对DoH服务器使用HTTP/3提高性能
-  listen: :7874
-  ipv6: true
-  enhanced-mode: redir-host
-  respect-rules: true
-  default-nameserver:
-    - tls://223.5.5.5:853
-    - tls://1.12.12.12:853
+  listen: 0.0.0.0:7874 
+  ipv6: true 
+  enhanced-mode: fake-ip 
+  fake-ip-range: 198.18.0.1/16 
+  prefer-h3: true 
+  respect-rules: false
+  cache: true
+  cache-algorithm: arc 
+  concurrent: true
+  use-hosts: true
+
+  fake-ip-filter: 
+    - "*.lan"
+    - "geosite:fakeip-filter"
+    - "geosite:cn"
+    - "*.local"
+    - "*.localdomain"
+    - "time.*.com"
+    - "ntp.*"
+    - "pool.ntp.org"
+    - "*.msftconnecttest.com"
+    - "*.msftncsi.com"
+    - "*.stun.*"
+    - "*.stunprotocol.org"
+    - "*.stun.l.google.com"
+    - "*.nintendo.net"
+    - "stun.*.*.*"
+
+  # ✅ 用于解析代理节点域名
   proxy-server-nameserver:
     - https://223.5.5.5/dns-query
     - https://1.12.12.12/dns-query
-  nameserver:
-    - https://dns.cloudflare.com/dns-query#DNS
-    - https://dns.google/dns-query#DNS
-  nameserver-policy:
-    geosite:private,cn,geolocation-cn:
-      - https://1.12.12.12/dns-query
-      - https://223.5.5.5/dns-query
-    geosite:category-ads-all: rcode://success
-  direct-nameserver:
-    - system
-  direct-nameserver-follow-policy: false
-  fallback:
-    - https://dns.google/dns-query#DNS
-    - tls://8.8.8.8:853#DNS
-    - https://cloudflare-dns.com/dns-query#DNS
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
-    geosite:
-      - gfw
-    ipcidr:
-      - 240.0.0.0/4
-    domain:
-      - '+.google.com'
-      - '+.github.com'
-      - '+.facebook.com'
-      - '+.youtube.com'
-      - '+.twitter.com'
-      - '+.telegram.org'
-      - '+.netflix.com'
+
+  # ✅ 用于解析上述 DoH 域名的基础 DNS
+  default-nameserver:
+    - 223.5.5.5
+    - 1.12.12.12
+
+  # ✅ 国内 DoH 加密防污染
+  nameserver: 
+    - https://dns.alidns.com/dns-query
+    - https://doh.pub/dns-query
+    - https://120.53.53.53/dns-query
+
+  nameserver-policy: 
+    "geosite:cn": [https://dns.alidns.com/dns-query, https://doh.pub/dns-query]
+# =========================================================
+# ⚙️ TProxy 透明代理配置（TCP + UDP）
+# =========================================================
+tproxy-port: 7895
+tun:
+  enable: true
+  stack: system
+  dns-hijack:
+    - tcp://any:53
+    - udp://any:53
+  auto-route: true
+  auto-detect-interface: true
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
