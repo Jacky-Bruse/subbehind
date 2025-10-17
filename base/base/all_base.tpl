@@ -69,7 +69,6 @@ dns:
 
   fake-ip-filter: 
     - "*.lan"
-    - "geosite:fakeip-filter"
     - "geosite:cn"
     - "*.local"
     - "*.localdomain"
