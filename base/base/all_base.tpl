@@ -16,7 +16,6 @@ geodata-mode: false
 geodata-loader: memconservative
 geo-auto-update: true
 geo-update-interval: 48
-global-client-fingerprint: chrome
 
 geox-url:
   geoip: https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat
