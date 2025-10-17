@@ -92,8 +92,8 @@ dns:
 
   # ✅ 用于解析上述 DoH 域名的基础 DNS
   default-nameserver:
-    - 223.5.5.5
-    - 1.12.12.12
+    - tls://223.5.5.5:853
+    - tls://1.12.12.12:853
 
   # ✅ 国内 DoH 加密防污染
   nameserver: 
