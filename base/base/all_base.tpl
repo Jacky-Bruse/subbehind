@@ -72,16 +72,29 @@ dns:
     - "geosite:cn"
     - "*.local"
     - "*.localdomain"
-    - "time.*.com"
-    - "ntp.*"
-    - "pool.ntp.org"
-    - "*.msftconnecttest.com"
-    - "*.msftncsi.com"
-    - "*.stun.*"
-    - "*.stunprotocol.org"
-    - "*.stun.l.google.com"
-    - "*.nintendo.net"
-    - "stun.*.*.*"
+    - 'localhost.ptlogin2.qq.com'
+    - 'dns.google'
+    - '*.srv.nintendo.net'
+    - '*.stun.l.google.com'
+    - '*.stun.cloudflare.com'
+
+    # ===== 腾讯海外游戏 (防止掉线) =====
+    - '*.intlgame.com'
+    - '*.tdatamaster.com'
+    - '*.igamecj.com'
+    - '*.proximabeta.com'
+    - '*.gjacky.com'
+    - '*.tcdnos.com'
+    - '*.listdl.com'
+    - '*.helpshift.com'
+    - '*.adjust.com'
+    - '*.adjust.io'
+    - '*.adjust.world'
+    - '*.appsflyersdk.com'
+    - '*.anticheatexpert.com'
+    - '*.wetest.net'
+    - '*.vmp.onezapp.com'
+    - '*.gcloud.download.igamecj.com'
 
   # ✅ 用于解析代理节点域名
   proxy-server-nameserver:
