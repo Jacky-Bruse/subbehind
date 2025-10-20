@@ -60,8 +60,9 @@ dns:
   ipv6: true 
   enhanced-mode: fake-ip 
   fake-ip-range: 198.18.0.1/16 
-  prefer-h3: true 
-  respect-rules: false
+  fake-ip-cache-size: 65536
+  prefer-h3: false 
+  respect-rules: true
   cache: true
   cache-algorithm: arc 
   concurrent: true
@@ -100,6 +101,7 @@ dns:
   proxy-server-nameserver:
     - https://223.5.5.5/dns-query
     - https://1.12.12.12/dns-query
+    - https://1.1.1.1/dns-query
 
   # ✅ 用于解析上述 DoH 域名的基础 DNS
   default-nameserver:
