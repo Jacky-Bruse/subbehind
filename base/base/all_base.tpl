@@ -99,9 +99,10 @@ dns:
 
   # ✅ 用于解析代理节点域名
   proxy-server-nameserver:
+    - tls://1.1.1.1:853
+    - tls://8.8.8.8:853
     - https://223.5.5.5/dns-query
     - https://1.12.12.12/dns-query
-    - https://1.1.1.1/dns-query
 
   # ✅ 用于解析上述 DoH 域名的基础 DNS
   default-nameserver:
