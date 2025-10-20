@@ -71,6 +71,7 @@ dns:
   fake-ip-filter: 
     - "*.lan"
     - "geosite:cn"
+    -"geosite:fake-ip-filter"
     - "*.local"
     - "*.localdomain"
     - 'localhost.ptlogin2.qq.com'
