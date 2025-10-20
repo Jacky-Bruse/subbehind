@@ -60,7 +60,6 @@ dns:
   ipv6: true 
   enhanced-mode: fake-ip 
   fake-ip-range: 198.18.0.1/16 
-#  fake-ip-cache-size: 65536
   prefer-h3: false 
   respect-rules: true
   cache: true
