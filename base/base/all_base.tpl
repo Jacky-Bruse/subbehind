@@ -71,6 +71,7 @@ dns:
     - "*.lan"
     - "geosite:cn"
     - "geosite:fake-ip-filter"
+    - "geosite:category-ai-!cn"
     - "*.local"
     - "*.localdomain"
     - 'localhost.ptlogin2.qq.com'
