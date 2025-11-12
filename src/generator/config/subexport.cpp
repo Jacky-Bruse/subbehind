@@ -2570,10 +2570,11 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json,
     if (!ext.nodelist) {
         auto direct = buildObject(allocator, "type", "direct", "tag", "DIRECT");
         outbounds.PushBack(direct, allocator);
-        auto reject = buildObject(allocator, "type", "block", "tag", "REJECT");
-        outbounds.PushBack(reject, allocator);
-        auto dns = buildObject(allocator, "type", "dns", "tag", "dns-out");
-        outbounds.PushBack(dns, allocator);
+        // 注释掉 REJECT 和 dns-out
+        // auto reject = buildObject(allocator, "type", "block", "tag", "REJECT");
+        // outbounds.PushBack(reject, allocator);
+        // auto dns = buildObject(allocator, "type", "dns", "tag", "dns-out");
+        // outbounds.PushBack(dns, allocator);
     }
 
     for (Proxy &x: nodes) {
@@ -2774,7 +2775,7 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json,
                     tls.AddMember("insecure", buildBooleanValue(scv), allocator);
                     proxy.AddMember("tls", tls, allocator);
                 }
-                if (!x.FakeType.empty())
+                if (!x.FakeType.empty() && x.FakeType != "none")
                     proxy.AddMember("network", rapidjson::StringRef(x.FakeType.c_str()), allocator);
                 if (!x.OBFSParam.empty())
                     proxy.AddMember("obfs", rapidjson::StringRef(x.OBFSParam.c_str()), allocator);
