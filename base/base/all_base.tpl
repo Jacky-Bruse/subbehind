@@ -52,72 +52,100 @@ sniffer:
     - Mijia Cloud
 
 # =========================================================
-# 🧩 DNS 模块：Fake-IP 增强模式 + DoH 防污染优化
+# 🧩 DNS 模块：Fake-IP 增强模式 + 国内外分流防泄露
 # =========================================================
 dns:
   enable: true
-  listen: 0.0.0.0:7874 
-  ipv6: true 
-  enhanced-mode: fake-ip 
-  fake-ip-range: 198.18.0.1/16 
-  prefer-h3: false 
+  listen: 0.0.0.0:7874
+  ipv6: true
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  prefer-h3: false
   respect-rules: true
   cache: true
-  cache-algorithm: arc 
+  cache-algorithm: arc
   concurrent: true
   use-hosts: true
 
-  fake-ip-filter: 
+  fake-ip-filter:
     - "*.lan"
+    - "*.local"
+    - "*.localdomain"
     - "geosite:cn"
     - "geosite:fake-ip-filter"
     - "geosite:category-ai-!cn"
-    - "*.local"
-    - "*.localdomain"
-    - 'localhost.ptlogin2.qq.com'
-    - 'dns.google'
-    - '*.srv.nintendo.net'
-    - '*.stun.l.google.com'
-    - '*.stun.cloudflare.com'
-
+    - "localhost.ptlogin2.qq.com"
+    - "dns.google"
+    - "*.srv.nintendo.net"
+    - "*.stun.l.google.com"
+    - "*.stun.cloudflare.com"
     # ===== 腾讯海外游戏 (防止掉线) =====
-    - '*.intlgame.com'
-    - '*.tdatamaster.com'
-    - '*.igamecj.com'
-    - '*.proximabeta.com'
-    - '*.gjacky.com'
-    - '*.tcdnos.com'
-    - '*.listdl.com'
-    - '*.helpshift.com'
-    - '*.adjust.com'
-    - '*.adjust.io'
-    - '*.adjust.world'
-    - '*.appsflyersdk.com'
-    - '*.anticheatexpert.com'
-    - '*.wetest.net'
-    - '*.vmp.onezapp.com'
-    - '*.gcloud.download.igamecj.com'
+    - "*.intlgame.com"
+    - "*.tdatamaster.com"
+    - "*.igamecj.com"
+    - "*.proximabeta.com"
+    - "*.gjacky.com"
+    - "*.tcdnos.com"
+    - "*.listdl.com"
+    - "*.helpshift.com"
+    - "*.adjust.com"
+    - "*.adjust.io"
+    - "*.adjust.world"
+    - "*.appsflyersdk.com"
+    - "*.anticheatexpert.com"
+    - "*.wetest.net"
+    - "*.vmp.onezapp.com"
+    - "*.gcloud.download.igamecj.com"
 
-  # ✅ 用于解析代理节点域名
+  # ✅ 解析代理节点域名（纯境外 DNS）
   proxy-server-nameserver:
-    - tls://1.1.1.1:853
-    - tls://8.8.8.8:853
-    - https://223.5.5.5/dns-query
-    - https://1.12.12.12/dns-query
+    - "tls://1.1.1.1:853"
+    - "tls://8.8.8.8:853"
+    - "https://cloudflare-dns.com/dns-query"
+    - "https://dns.google/dns-query"
 
-  # ✅ 用于解析上述 DoH 域名的基础 DNS
+  # ✅ 解析 DoH/DoT 域名的基础 DNS（纯境外加密 DNS）
   default-nameserver:
-    - tls://223.5.5.5:853
-    - tls://1.12.12.12:853
+    - "tls://1.1.1.1:853"
+    - "tls://8.8.8.8:853"
+    - "tls://9.9.9.9:853"
 
-  # ✅ 国内 DoH 加密防污染
-  nameserver: 
-    - https://dns.alidns.com/dns-query
-    - https://doh.pub/dns-query
-    - https://120.53.53.53/dns-query
+  # ✅ 直连流量使用的 DNS（国内 DoH）
+  direct-nameserver:
+    - "https://dns.alidns.com/dns-query"
+    - "https://doh.pub/dns-query"
+    - "https://120.53.53.53/dns-query"
 
-  nameserver-policy: 
-    "geosite:cn": [https://dns.alidns.com/dns-query, https://doh.pub/dns-query]
+  # ✅ 主 DNS（境外加密 DNS，带标签可配合规则）
+  nameserver:
+    - "https://cloudflare-dns.com/dns-query#DNS"
+    - "https://dns.google/dns-query#DNS"
+    - "tls://1.1.1.1:853#DNS"
+    - "tls://9.9.9.9:853#DNS"
+
+  # ✅ 兜底：污染检测回退机制
+  fallback:
+    - "https://cloudflare-dns.com/dns-query"
+    - "https://dns.google/dns-query"
+    - "tls://1.1.1.1:853"
+    - "tls://8.8.8.8:853"
+
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    geosite:
+      - "geosite:geolocation-!cn"
+    ipcidr:
+      - 240.0.0.0/4
+      - 0.0.0.0/32
+      - 127.0.0.1/32
+
+  # ✅ 域名策略分流
+  nameserver-policy:
+    "geosite:cn":
+      - "https://dns.alidns.com/dns-query"
+      - "https://doh.pub/dns-query"
+      - "https://120.53.53.53/dns-query"
 # =========================================================
 # ⚙️ TProxy 透明代理配置（TCP + UDP）
 # =========================================================
