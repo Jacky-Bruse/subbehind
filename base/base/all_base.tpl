@@ -118,10 +118,10 @@ dns:
 
   # ✅ 主 DNS（境外加密 DNS，带标签可配合规则）
   nameserver:
-    - "https://cloudflare-dns.com/dns-query#DNS"
-    - "https://dns.google/dns-query#DNS"
-    - "tls://1.1.1.1:853#DNS"
-    - "tls://9.9.9.9:853#DNS"
+    - "https://cloudflare-dns.com/dns-query"
+    - "https://dns.google/dns-query"
+    - "tls://1.1.1.1:853"
+    - "tls://9.9.9.9:853"
 
   # ✅ 兜底：污染检测回退机制
   fallback:
@@ -134,7 +134,7 @@ dns:
     geoip: true
     geoip-code: CN
     geosite:
-      - "geosite:geolocation-!cn"
+      - "geolocation-!cn"
     ipcidr:
       - 240.0.0.0/4
       - 0.0.0.0/32
