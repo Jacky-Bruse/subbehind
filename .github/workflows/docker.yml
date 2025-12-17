@@ -21,7 +21,7 @@ jobs:
           - platform: linux/amd64
             os: ubuntu-latest
           - platform: linux/arm64
-            os: ubuntu-latest
+            os: ubuntu-24.04-arm  # 原生 ARM runner，无需 QEMU 模拟
 
     runs-on: ${{ matrix.os }}
     name: Build ${{ matrix.platform }} Image
@@ -29,13 +29,15 @@ jobs:
       - name: Prepare
         run: |
           platform=${{ matrix.platform }}
-          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV    
+          echo "PLATFORM_PAIR=${platform//\//-}" >> $GITHUB_ENV
 
       - name: Checkout base
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - name: Set up QEMU
+        if: matrix.platform != 'linux/arm64'  # ARM runner 不需要 QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
