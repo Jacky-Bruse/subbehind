@@ -51,13 +51,10 @@ sniffer:
   skip-domain:
     - Mijia Cloud
 
-# =========================================================
-# 🧩 DNS 模块：Fake-IP 增强模式 + 国内外分流防泄露
-# =========================================================
 dns:
   enable: true
   listen: 0.0.0.0:7874
-  ipv6: true
+  ipv6: false  # 建议关闭，除非有特殊需求，避免路由黑洞
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
   prefer-h3: false
@@ -66,15 +63,61 @@ dns:
   cache-algorithm: arc
   concurrent: true
   use-hosts: true
+  
+  # 核心修复 1: 必须使用国内基础 DNS 确保能解析机场域名
+  default-nameserver:
+    - 223.5.5.5
+    - 114.114.114.114
+  
+  # 核心修复 2: 代理节点域名的解析也必须走国内 DNS
+  proxy-server-nameserver:
+    - 223.5.5.5
+    - 114.114.114.114
 
+  # 你的 Nameserver (主要用于解析国外域名，走代理)
+  nameserver:
+    - https://cloudflare-dns.com/dns-query
+    - https://dns.google/dns-query
+    # 也可以保留 TLS，但 Https (DoH) 在代理隧道中通常表现更好
+    - tls://1.1.1.1:853 
+    - tls://8.8.8.8:853
+
+  # 策略分流 (核心优化: 国内域名指定走国内 DoH，准确且防污染)
+  nameserver-policy:
+    "geosite:cn,private": # 包含 cn 和 私有域名
+      - https://dns.alidns.com/dns-query
+      - https://doh.pub/dns-query
+
+  # Fallback 模块优化: 
+  # 因为有了上面的 nameserver-policy，fallback 实际上很少被触发。
+  # 我们可以保留一个简单的配置作为兜底，或者直接移除。
+  # 如果你一定要用，保持简单：
+  fallback:
+    - https://cloudflare-dns.com/dns-query
+    - https://dns.google/dns-query
+  
+  fallback-filter:
+    geoip: true
+    geoip-code: CN
+    ipcidr:
+      - 240.0.0.0/4
+  
+  # 优化后的 Filter
   fake-ip-filter:
     - "*.lan"
     - "*.local"
     - "*.localdomain"
-    - "geosite:cn"
-    - "geosite:fake-ip-filter"
-    - "geosite:category-ai-!cn"
     - "localhost.ptlogin2.qq.com"
+    - "dns.google"
+    - "+.srv.nintendo.net"
+    - "+.stun.l.google.com"
+    - "+.stun.cloudflare.com"
+    - "+.n-content.com"     # Nintendo
+    # 游戏相关保留
+    - "*.intlgame.com"
+    - "*.igamecj.com"
+    - "*.gjacky.com"
+    - "*.anticheatexpert.com"
     - "dns.google"
     - "*.srv.nintendo.net"
     - "*.stun.l.google.com"
@@ -97,55 +140,6 @@ dns:
     - "*.vmp.onezapp.com"
     - "*.gcloud.download.igamecj.com"
 
-  # ✅ 解析代理节点域名（纯境外 DNS）
-  proxy-server-nameserver:
-    - "tls://1.1.1.1:853"
-    - "tls://8.8.8.8:853"
-    - "https://cloudflare-dns.com/dns-query"
-    - "https://dns.google/dns-query"
-
-  # ✅ 解析 DoH/DoT 域名的基础 DNS（纯境外加密 DNS）
-  default-nameserver:
-    - "tls://1.1.1.1:853"
-    - "tls://8.8.8.8:853"
-    - "tls://9.9.9.9:853"
-
-  # ✅ 直连流量使用的 DNS（国内 DoH）
-  direct-nameserver:
-    - "https://dns.alidns.com/dns-query"
-    - "https://doh.pub/dns-query"
-    - "https://120.53.53.53/dns-query"
-
-  # ✅ 主 DNS（境外加密 DNS，带标签可配合规则）
-  nameserver:
-    - "https://cloudflare-dns.com/dns-query"
-    - "https://dns.google/dns-query"
-    - "tls://1.1.1.1:853"
-    - "tls://9.9.9.9:853"
-
-  # ✅ 兜底：污染检测回退机制
-  fallback:
-    - "https://cloudflare-dns.com/dns-query"
-    - "https://dns.google/dns-query"
-    - "tls://1.1.1.1:853"
-    - "tls://8.8.8.8:853"
-
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
-    geosite:
-      - "geolocation-!cn"
-    ipcidr:
-      - 240.0.0.0/4
-      - 0.0.0.0/32
-      - 127.0.0.1/32
-
-  # ✅ 域名策略分流
-  nameserver-policy:
-    "geosite:cn":
-      - "https://dns.alidns.com/dns-query"
-      - "https://doh.pub/dns-query"
-      - "https://120.53.53.53/dns-query"
 # =========================================================
 # ⚙️ TProxy 透明代理配置（TCP + UDP）
 # =========================================================
