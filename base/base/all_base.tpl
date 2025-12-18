@@ -54,7 +54,7 @@ sniffer:
 dns:
   enable: true
   listen: 0.0.0.0:7874
-  ipv6: false  # 建议关闭，除非有特殊需求，避免路由黑洞
+  ipv6: true  # 建议关闭，除非有特殊需求，避免路由黑洞
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
   prefer-h3: false
