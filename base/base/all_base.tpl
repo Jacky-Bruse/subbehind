@@ -66,13 +66,13 @@ dns:
   
   # 核心修复 1: 必须使用国内基础 DNS 确保能解析机场域名
   default-nameserver:
-    - 223.5.5.5
-    - 114.114.114.114
+    - https://223.5.5.5/dns-query
+    - https://1.12.12.12/dns-query
   
   # 核心修复 2: 代理节点域名的解析也必须走国内 DNS
   proxy-server-nameserver:
-    - 223.5.5.5
-    - 114.114.114.114
+    - https://223.5.5.5/dns-query
+    - https://1.12.12.12/dns-query
 
   # 你的 Nameserver (主要用于解析国外域名，走代理)
   nameserver:
@@ -87,6 +87,8 @@ dns:
     "geosite:cn,private": # 包含 cn 和 私有域名
       - https://dns.alidns.com/dns-query
       - https://doh.pub/dns-query
+    "geosite:category-ads-all": # 广告域名
+      - "rcode://name_error"
 
   # Fallback 模块优化: 
   # 因为有了上面的 nameserver-policy，fallback 实际上很少被触发。
