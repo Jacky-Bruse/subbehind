@@ -255,7 +255,10 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
     node.TransferProtocol = net.empty() ? "tcp" : type == "http" ? "http" : net;
     node.Edge = edge;
     node.Flow = flow;
-    node.Encryption = encryption;
+    // 规范化 encryption：trim 空白，None/NONE 统一为 none
+    std::string enc = trim(encryption);
+    if (toLower(enc) == "none") enc = "none";
+    node.Encryption = enc;
     node.FakeType = type;
     node.TLSSecure = tls == "tls" || tls == "xtls" || tls == "reality";
     node.PublicKey = pbk;
@@ -1477,8 +1480,6 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 singleproxy["alpn"] >>= alpnList;
                 singleproxy["packet-encoding"] >>= packet_encoding;
                 singleproxy["encryption"] >>= encryption;
-                if (encryption.empty())
-                    singleproxy["cipher"] >>= encryption;
                 bool vless_udp;
                 singleproxy["udp"] >> vless_udp;
                 vlessConstruct(node, XRAY_DEFAULT_GROUP, ps, server, port, type, id, aid, net, "auto", flow, mode, path,
@@ -1811,6 +1812,8 @@ void explodeStdVless(std::string vless, Proxy &node) {
     fp = getUrlArg(addition, "fp");
     std::string packet_encoding = getUrlArg(addition, "packet-encoding");
     std::string encryption = getUrlArg(addition, "encryption");
+    if (strFind(encryption, "%"))
+        encryption = urlDecode(encryption);
     std::string alpn = getUrlArg(addition, "alpn");
     std::vector<std::string> alpnList;
     if (!alpn.empty()) {

@@ -619,12 +619,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 }
                 if (!x.Flow.empty())
                     singleproxy["flow"] = x.Flow;
-                if (!x.Encryption.empty()) {
-                    if (ext.clash_new_field_name)
-                        singleproxy["encryption"] = x.Encryption;
-                    else
-                        singleproxy["cipher"] = x.Encryption;
-                }
+                if (!x.Encryption.empty() && x.Encryption != "none")
+                    singleproxy["encryption"] = x.Encryption;
                 if (!scv.is_undef())
                     singleproxy["skip-cert-verify"] = scv.get();
                 if (!x.PublicKey.empty()) {
@@ -1317,7 +1313,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
 
                 if (!flow.empty())
                     addVlessParam("flow", flow);
-                addVlessParam("encryption", x.Encryption.empty() ? "none" : x.Encryption);
+                addVlessParam("encryption", urlEncode(x.Encryption.empty() ? "none" : x.Encryption));
                 if (!pbk.empty())
                     addVlessParam("pbk", pbk);
                 if (!sid.empty())
@@ -2640,6 +2636,8 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json,
                     proxy.AddMember("packet_encoding", rapidjson::StringRef("xudp"), allocator);
                 if (!x.Flow.empty())
                     proxy.AddMember("flow", rapidjson::StringRef(x.Flow.c_str()), allocator);
+                if (!x.Encryption.empty() && x.Encryption != "none")
+                    proxy.AddMember("encryption", rapidjson::StringRef(x.Encryption.c_str()), allocator);
                 if (!x.PacketEncoding.empty()) {
                     proxy.AddMember("packet_encoding", rapidjson::StringRef(x.PacketEncoding.c_str()), allocator);
                 }
