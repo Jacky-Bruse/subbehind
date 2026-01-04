@@ -619,6 +619,12 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 }
                 if (!x.Flow.empty())
                     singleproxy["flow"] = x.Flow;
+                if (!x.Encryption.empty()) {
+                    if (ext.clash_new_field_name)
+                        singleproxy["encryption"] = x.Encryption;
+                    else
+                        singleproxy["cipher"] = x.Encryption;
+                }
                 if (!scv.is_undef())
                     singleproxy["skip-cert-verify"] = scv.get();
                 if (!x.PublicKey.empty()) {
@@ -1283,7 +1289,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                 }
                 proxyStr += "#" + urlEncode(remark);
                 break;
-            case ProxyType::VLESS:
+            case ProxyType::VLESS: {
                 if (!vless)
                     continue;
             // tls = getUrlArg(addition, "security");
@@ -1294,58 +1300,56 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
             // fp = getUrlArg(addition, "fp");
             // std::string packet_encoding = getUrlArg(addition, "packet-encoding");
             // std::string alpn = getUrlArg(addition, "alpn");
-                proxyStr = "vless://" + (id.empty()
-                               ? "00000000-0000-0000-0000-000000000000"
-                               : id) + "@" + hostname + ":" + port+"?";
+                proxyStr = "vless://" +
+                           (id.empty() ? "00000000-0000-0000-0000-000000000000" : id) + "@" + hostname + ":" + port +
+                           "?";
+                auto addVlessParam = [&](const std::string &k, const std::string &v) {
+                    proxyStr += (proxyStr.back() == '?' ? "" : "&");
+                    proxyStr += k + "=" + v;
+                };
+
                 if (!tls.empty()) {
-                    if (!pbk.empty()) {
-                        proxyStr += "&security=reality";
-                    }else {
-                        proxyStr += "&security=" + tls;
-                    }
+                    if (!pbk.empty())
+                        addVlessParam("security", "reality");
+                    else
+                        addVlessParam("security", tls);
                 }
 
-                if (!flow.empty()) {
-                    proxyStr += "&flow=" + flow;
-                }
-                if (!pbk.empty()) {
-                    proxyStr += "&pbk=" + pbk;
-                }
-                if (!sid.empty()) {
-                    proxyStr += "&sid=" + sid;
-                }
-                if (!fp.empty()) {
-                    proxyStr += "&fp=" + fp;
-                }
-                if (!packet_encoding.empty()) {
-                    proxyStr += "&packet-encoding=" + packet_encoding;
-                }
-                if (!alpns.empty()) {
-                    proxyStr += "&alpn=" + alpns[0];
-                }
-                if (!sni.empty()) {
-                    proxyStr += "&sni=" + sni;
-                }
+                if (!flow.empty())
+                    addVlessParam("flow", flow);
+                addVlessParam("encryption", x.Encryption.empty() ? "none" : x.Encryption);
+                if (!pbk.empty())
+                    addVlessParam("pbk", pbk);
+                if (!sid.empty())
+                    addVlessParam("sid", sid);
+                if (!fp.empty())
+                    addVlessParam("fp", fp);
+                if (!packet_encoding.empty())
+                    addVlessParam("packet-encoding", packet_encoding);
+                if (!alpns.empty())
+                    addVlessParam("alpn", alpns[0]);
+                if (!sni.empty())
+                    addVlessParam("sni", sni);
                 if (!transproto.empty()) {
-                    proxyStr += "&type=" + transproto;
+                    addVlessParam("type", transproto);
                     switch (hash_(transproto)) {
                         case "tcp"_hash:
                         case "ws"_hash:
                         case "h2"_hash:
-                            proxyStr += "&headerType=" + fake_type;
                             if (!host.empty()) {
-                                proxyStr += "&host=" + host;
+                                addVlessParam("host", host);
                             }
-                            proxyStr += "&path=" + urlEncode(path.empty() ? "/" : path);
+                            addVlessParam("headerType", fake_type);
+                            addVlessParam("path", urlEncode(path.empty() ? "/" : path));
                             break;
                         case "grpc"_hash:
-                            proxyStr += "&serviceName=" + path;
-                            proxyStr += "&mode=" + mode;
+                            addVlessParam("serviceName", path);
+                            addVlessParam("mode", mode);
                             break;
                         case "quic"_hash:
-                            proxyStr += "&headerType=" + fake_type;
-                            proxyStr += "&quicSecurity=" + (host.empty() ? sni : host);
-                            proxyStr += "&key=" + path;
+                            addVlessParam("headerType", fake_type);
+                            addVlessParam("quicSecurity", host.empty() ? sni : host);
+                            addVlessParam("key", path);
                             break;
                         default:
                             break;
@@ -1353,6 +1357,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                 }
                 proxyStr += "#" + urlEncode(remark);
                 break;
+            }
             case ProxyType::Trojan:
                 if (!trojan)
                     continue;
