@@ -91,10 +91,6 @@ dns:
       - https://doh.pub/dns-query
     "geosite:category-ads-all": # 广告域名
       - "rcode://name_error"
-    # 私有域名必须发往系统 DNS (通常是路由器网关)，否则公网 DNS 无法解析
-    "geosite:private": "system"
-    # 连通性检测域名建议走本地解析，以反映真实物理网络状态
-    "geosite:connectivity-check": "system"
 
   # Fallback 模块优化: 
   # 因为有了上面的 nameserver-policy，fallback 实际上很少被触发。
