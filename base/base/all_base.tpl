@@ -57,6 +57,8 @@ dns:
   ipv6: true  # 建议关闭，除非有特殊需求，避免路由黑洞
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
+  # 若你不想动 IPv6 映射，也可以先不加这一行（但“稳定一致性”会略差一些）
+  fake-ip-range6: fdfe:dcba:9876::1/64
   prefer-h3: false
   respect-rules: true
   cache: true
@@ -106,41 +108,58 @@ dns:
   
   # 优化后的 Filter
   fake-ip-filter:
-    - "*.lan"
-    - "*.local"
-    - "*.localdomain"
-    - "localhost.ptlogin2.qq.com"
-    - "dns.google"
+    # ===============================================================
+    # 1) 基础设施与局域网（稳定必留）
+    # ===============================================================
+    - "geosite:private"
+
+    # ===============================================================
+    # 2) 操作系统连通性检测（稳定必留）
+    # ===============================================================
+    - "geosite:connectivity-check"
+    # Windows NCSI 兜底：明确主机名（更贴近实际探测）
+    - "www.msftconnecttest.com"
+    - "www.msftncsi.com"
+    - "dns.msftncsi.com"
+    # 可选：若你常在 IPv6-only/IPv6 优先网络下遇到 NCSI 异常再加
+    # - "ipv6.msftconnecttest.com"
+
+    # ===============================================================
+    # 3) RTC / NAT 穿透（方案B的核心增强）
+    # ===============================================================
+    # Nintendo Switch NAT 探测：保留这一条即可（覆盖全面且语义清晰）
     - "+.srv.nintendo.net"
-    - "+.stun.l.google.com"
-    - "+.stun.cloudflare.com"
-    - "+.n-content.com"     # Nintendo
-    # 游戏相关保留
-    - "*.intlgame.com"
-    - "*.igamecj.com"
-    - "*.gjacky.com"
-    - "*.anticheatexpert.com"
-    - "dns.google"
-    - "*.srv.nintendo.net"
-    - "*.stun.l.google.com"
-    - "*.stun.cloudflare.com"
-    # ===== 腾讯海外游戏 (防止掉线) =====
-    - "*.intlgame.com"
-    - "*.tdatamaster.com"
-    - "*.igamecj.com"
-    - "*.proximabeta.com"
-    - "*.gjacky.com"
-    - "*.tcdnos.com"
-    - "*.listdl.com"
-    - "*.helpshift.com"
-    - "*.adjust.com"
-    - "*.adjust.io"
-    - "*.adjust.world"
-    - "*.appsflyersdk.com"
-    - "*.anticheatexpert.com"
-    - "*.wetest.net"
-    - "*.vmp.onezapp.com"
-    - "*.gcloud.download.igamecj.com"
+
+    # PlayStation STUN
+    - "+.stun.playstation.net"
+
+    # Xbox Live / Teredo 相关（敏感服务，过滤更稳）
+    - "xbox.*.microsoft.com"
+    - "+.xboxlive.com"
+
+    # 通用 WebRTC STUN（显式列全，避免不确定通配）
+    - "stun.l.google.com"
+    - "stun1.l.google.com"
+    - "stun2.l.google.com"
+    - "stun3.l.google.com"
+    - "stun4.l.google.com"
+    - "stun.cloudflare.com"
+    - "stun.services.mozilla.com"
+
+    # ===============================================================
+    # 4) 软件兼容性（你已明确需要的本地回环）
+    # ===============================================================
+    - "localhost.ptlogin2.qq.com"
+    - "localhost.sec.qq.com"
+
+    # ===============================================================
+    # 5) NTP 时间同步（少而准，避免误伤）
+    # ===============================================================
+    - "time.windows.com"
+    - "time.apple.com"
+    - "time.cloudflare.com"
+    - "time.nist.gov"
+    - "+.pool.ntp.org"
 
 # =========================================================
 # ⚙️ TProxy 透明代理配置（TCP + UDP）
