@@ -125,6 +125,15 @@ dns:
     - "dns.msftncsi.com"
     # 可选：若你常在 IPv6-only/IPv6 优先网络下遇到 NCSI 异常再加
     # - "ipv6.msftconnecttest.com"
+    # 关键：Cloudflare Tunnel 必须排除 fake-ip（至少这几项）
+    - "region1.v2.argotunnel.com"
+    - "region2.v2.argotunnel.com"
+    - "us-region1.v2.argotunnel.com"
+    - "us-region2.v2.argotunnel.com"
+    - "*.argotunnel.com"
+    # 保险项（可保留）
+    - "*.cftunnel.com"
+    - "*.cloudflare.com"
 
     # ===============================================================
     # 3) RTC / NAT 穿透（方案B的核心增强）
