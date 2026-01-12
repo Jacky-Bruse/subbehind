@@ -217,7 +217,7 @@ std::string getRuleset(RESPONSE_CALLBACK_ARGS) {
                 output_content += "  - '";
                 if (strLine[posb - 2] == 'X')
                     output_content += "+.";
-                output_content += strLine.substr(posb, pose);
+                output_content += trim(strLine.substr(posb, pose));
                 output_content += "'\n";
                 continue;
             case 4:
@@ -226,7 +226,7 @@ std::string getRuleset(RESPONSE_CALLBACK_ARGS) {
                 if (filterLine())
                     continue;
                 output_content += "  - '";
-                output_content += strLine.substr(posb, pose);
+                output_content += trim(strLine.substr(posb, pose));
                 output_content += "'\n";
                 continue;
             case 5:
@@ -236,7 +236,7 @@ std::string getRuleset(RESPONSE_CALLBACK_ARGS) {
                     continue;
                 if (strLine[posb - 2] == 'X')
                     output_content += '.';
-                output_content += strLine.substr(posb, pose);
+                output_content += trim(strLine.substr(posb, pose));
                 output_content += '\n';
                 continue;
             case 6:
@@ -340,6 +340,7 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
         "filename"), argUpdateInterval = getUrlArg(
         argument, "interval"), argUpdateStrict = getUrlArg(argument, "strict");
     std::string argRenames = getUrlArg(argument, "rename"), argFilterScript = getUrlArg(argument, "filter_script");
+    std::string argUserAgent = getUrlArg(argument, "ua");
 
     /// switches with default value
     tribool argUpload = getUrlArg(argument, "upload"), argEmoji = getUrlArg(argument, "emoji"), argAddEmoji = getUrlArg(
@@ -567,6 +568,7 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
     parse_set.sub_info = &subInfo;
     parse_set.authorized = authorized;
     parse_set.request_header = &request.headers;
+    parse_set.custom_user_agent = &argUserAgent;
     parse_set.js_runtime = ext.js_runtime;
     parse_set.js_context = ext.js_context;
 
@@ -1336,7 +1338,7 @@ int simpleGenerator() {
         }
         if (ini.item_exist("profile")) {
             profile = ini.get("profile");
-            request.argument.emplace("name", urlEncode(profile));
+            request.argument.emplace("name", profile);
             request.argument.emplace("token", global.accessToken);
             request.argument.emplace("expand", "true");
             content = getProfile(request, response);
