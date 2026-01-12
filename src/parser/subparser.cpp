@@ -69,7 +69,10 @@ void vmessConstruct(Proxy &node, const std::string &group, const std::string &re
                     const std::string &net, const std::string &cipher, const std::string &path, const std::string &host,
                     const std::string &edge, const std::string &tls, const std::string &sni,
                     const std::vector<std::string> &alpnList, tribool udp, tribool tfo,
-                    tribool scv, tribool tls13, const std::string &underlying_proxy) {
+                    tribool scv, tribool tls13, const std::string &underlying_proxy,
+                    const std::string &client_fingerprint, tribool v2ray_http_upgrade,
+                    uint32_t ws_max_early_data, const std::string &ws_early_data_header_name,
+                    tribool v2ray_http_upgrade_fast_open, const std::string &ip_version) {
     commonConstruct(node, ProxyType::VMess, group, remarks, add, port, udp, tfo, scv, tls13, underlying_proxy);
     node.UserId = id.empty() ? "00000000-0000-0000-0000-000000000000" : id;
     node.AlterId = to_int(aid);
@@ -77,6 +80,7 @@ void vmessConstruct(Proxy &node, const std::string &group, const std::string &re
     node.TransferProtocol = net.empty() ? "tcp" : net;
     node.Edge = edge;
     node.ServerName = sni;
+    node.AlpnList = alpnList;
 
     if (net == "quic") {
         node.QUICSecure = host;
@@ -87,6 +91,13 @@ void vmessConstruct(Proxy &node, const std::string &group, const std::string &re
     }
     node.FakeType = type;
     node.TLSSecure = tls == "tls";
+    // 新增 mihomo 参数
+    node.ClientFingerprint = client_fingerprint;
+    node.V2rayHttpUpgrade = v2ray_http_upgrade;
+    node.WsMaxEarlyData = ws_max_early_data;
+    node.WsEarlyDataHeaderName = ws_early_data_header_name;
+    node.V2rayHttpUpgradeFastOpen = v2ray_http_upgrade_fast_open;
+    node.IpVersion = ip_version;
 }
 
 void ssrConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &server,
@@ -107,12 +118,27 @@ void ssrConstruct(Proxy &node, const std::string &group, const std::string &rema
 void ssConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &server,
                  const std::string &port, const std::string &password, const std::string &method,
                  const std::string &plugin, const std::string &pluginopts, tribool udp, tribool tfo, tribool scv,
-                 tribool tls13, const std::string &underlying_proxy) {
+                 tribool tls13, const std::string &underlying_proxy,
+                 tribool udp_over_tcp, uint32_t udp_over_tcp_version,
+                 tribool smux_enabled, const std::string &smux_protocol,
+                 uint32_t smux_max_connections, uint32_t smux_min_streams, uint32_t smux_max_streams,
+                 tribool smux_padding, tribool smux_statistic, tribool smux_only_tcp) {
     commonConstruct(node, ProxyType::Shadowsocks, group, remarks, server, port, udp, tfo, scv, tls13, underlying_proxy);
     node.Password = password;
     node.EncryptMethod = method;
     node.Plugin = plugin;
     node.PluginOption = pluginopts;
+    // 新增 mihomo 参数
+    node.UdpOverTcp = udp_over_tcp;
+    node.UdpOverTcpVersion = udp_over_tcp_version;
+    node.SmuxEnabled = smux_enabled;
+    node.SmuxProtocol = smux_protocol;
+    node.SmuxMaxConnections = smux_max_connections;
+    node.SmuxMinStreams = smux_min_streams;
+    node.SmuxMaxStreams = smux_max_streams;
+    node.SmuxPadding = smux_padding;
+    node.SmuxStatistic = smux_statistic;
+    node.SmuxOnlyTcp = smux_only_tcp;
 }
 
 void socksConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &server,
@@ -139,7 +165,9 @@ void trojanConstruct(Proxy &node, const std::string &group, const std::string &r
                      const std::vector<std::string> &alpnList,
                      bool tlssecure,
                      tribool udp, tribool tfo,
-                     tribool scv, tribool tls13, const std::string &underlying_proxy) {
+                     tribool scv, tribool tls13, const std::string &underlying_proxy,
+                     const std::string &client_fingerprint, const std::string &ss_method,
+                     const std::string &ss_password, const std::string &ip_version) {
     commonConstruct(node, ProxyType::Trojan, group, remarks, server, port, udp, tfo, scv, tls13, underlying_proxy);
     node.Password = password;
     node.Host = host;
@@ -149,6 +177,11 @@ void trojanConstruct(Proxy &node, const std::string &group, const std::string &r
     node.Fingerprint = fp;
     node.ServerName = sni;
     node.AlpnList = alpnList;
+    // 新增 mihomo 参数
+    node.ClientFingerprint = client_fingerprint.empty() ? fp : client_fingerprint;
+    node.TrojanSsMethod = ss_method;
+    node.TrojanSsPassword = ss_password;
+    node.IpVersion = ip_version;
 }
 
 void snellConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &server,
@@ -189,12 +222,17 @@ void hysteriaConstruct(Proxy &node, const std::string &group, const std::string 
                        const std::string &obfsParam, const std::string &insecure, const std::string &ports,
                        const std::string &sni, tribool udp,
                        tribool tfo, tribool scv,
-                       tribool tls13, const std::string &underlying_proxy) {
+                       tribool tls13, const std::string &underlying_proxy,
+                       const std::string &fingerprint, const std::string &ca, const std::string &ca_str,
+                       uint32_t recv_window_conn, uint32_t recv_window,
+                       tribool disable_mtu_discovery, uint32_t hop_interval, tribool fast_open) {
     commonConstruct(node, ProxyType::Hysteria, group, remarks, add, port, udp, tfo, scv, tls13, underlying_proxy);
     node.Auth = auth;
     node.Host = (host.empty() && !isIPv4(add) && !isIPv6(add)) ? add.data() : trim(host);
     node.UpMbps = up;
     node.DownMbps = down;
+    node.Up = up;
+    node.Down = down;
     node.Alpn = alpn;
     node.OBFSParam = obfsParam;
     node.Insecure = insecure;
@@ -202,6 +240,15 @@ void hysteriaConstruct(Proxy &node, const std::string &group, const std::string 
     node.AuthStr = auth_str;
     node.Ports = ports;
     node.ServerName = sni;
+    // 新增 mihomo 参数
+    node.Fingerprint = fingerprint;
+    node.Ca = ca;
+    node.CaStr = ca_str;
+    node.RecvWindowConn = recv_window_conn;
+    node.RecvWindow = recv_window;
+    node.DisableMtuDiscovery = disable_mtu_discovery;
+    node.HopInterval = hop_interval;
+    node.FastOpen = fast_open;
 }
 
 void anyTlSConstruct(Proxy &node, const std::string &group, const std::string &remarks,
@@ -247,7 +294,11 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
                     const std::vector<std::string> &alpnList, const std::string &packet_encoding,
                     tribool udp, tribool tfo,
                     tribool scv, tribool tls13, const std::string &underlying_proxy, tribool v2ray_http_upgrade,
-                    const std::string &encryption) {
+                    const std::string &encryption, const std::string &ip_version, tribool xudp,
+                    tribool packet_addr, tribool global_padding, tribool authenticated_length,
+                    tribool ech_enable, const std::string &ech_config,
+                    uint32_t ws_max_early_data, const std::string &ws_early_data_header_name,
+                    tribool v2ray_http_upgrade_fast_open) {
     commonConstruct(node, ProxyType::VLESS, group, remarks, add, port, udp, tfo, scv, tls13, underlying_proxy);
     node.UserId = id.empty() ? "00000000-0000-0000-0000-000000000000" : id;
     node.AlterId = to_int(aid);
@@ -263,11 +314,23 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
     node.TLSSecure = tls == "tls" || tls == "xtls" || tls == "reality";
     node.PublicKey = pbk;
     node.ShortId = sid;
-    node.Fingerprint = fp;
+    node.ClientFingerprint = fp;  // 使用 ClientFingerprint 存储客户端指纹
+    node.Fingerprint = fp;        // 同时保留 Fingerprint 兼容性
     node.ServerName = sni;
     node.AlpnList = alpnList;
     node.PacketEncoding = packet_encoding;
     node.TLSStr = tls;
+    // 新增 mihomo 参数
+    node.IpVersion = ip_version;
+    node.XUDP = xudp;
+    node.PacketAddr = packet_addr;
+    node.GlobalPadding = global_padding;
+    node.AuthenticatedLength = authenticated_length;
+    node.EchEnable = ech_enable;
+    node.EchConfig = ech_config;
+    node.WsMaxEarlyData = ws_max_early_data;
+    node.WsEarlyDataHeaderName = ws_early_data_header_name;
+    node.V2rayHttpUpgradeFastOpen = v2ray_http_upgrade_fast_open;
     switch (hash_(net)) {
         case "grpc"_hash:
             node.Host = host;
@@ -293,18 +356,47 @@ void hysteria2Construct(Proxy &node, const std::string &group, const std::string
                         const std::string &obfsParam, const std::string &obfsPassword, const std::string &sni,
                         const std::string &publicKey, const std::string &ports,
                         tribool udp, tribool tfo,
-                        tribool scv, const std::string &underlying_proxy) {
+                        tribool scv, const std::string &underlying_proxy,
+                        const std::string &mport, const std::string &fingerprint,
+                        const std::string &ca, const std::string &ca_str,
+                        uint32_t cwnd, uint32_t hop_interval,
+                        uint64_t init_stream_recv_window, uint64_t max_stream_recv_window,
+                        uint64_t init_conn_recv_window, uint64_t max_conn_recv_window) {
     commonConstruct(node, ProxyType::Hysteria2, group, remarks, add, port, udp, tfo, scv, tribool(), underlying_proxy);
     node.Password = password;
     node.Host = (host.empty() && !isIPv4(add) && !isIPv6(add)) ? add.data() : trim(host);
     node.UpMbps = up;
     node.DownMbps = down;
+    node.Up = up;
+    node.Down = down;
+    // 解析带宽值为整数
+    if (!up.empty()) {
+        std::string up_val = up;
+        if (strFind(up_val, " ")) up_val = up_val.substr(0, up_val.find(" "));
+        node.UpSpeed = to_int(up_val);
+    }
+    if (!down.empty()) {
+        std::string down_val = down;
+        if (strFind(down_val, " ")) down_val = down_val.substr(0, down_val.find(" "));
+        node.DownSpeed = to_int(down_val);
+    }
     node.Alpn = alpn;
     node.OBFSParam = obfsParam;
     node.OBFSPassword = obfsPassword;
     node.ServerName = sni;
     node.PublicKey = publicKey;
     node.Ports = ports;
+    // 新增 mihomo 参数
+    node.Mport = mport;
+    node.Fingerprint = fingerprint;
+    node.Ca = ca;
+    node.CaStr = ca_str;
+    node.CWND = cwnd;
+    node.HopInterval = hop_interval;
+    node.InitialStreamReceiveWindow = init_stream_recv_window;
+    node.MaxStreamReceiveWindow = max_stream_recv_window;
+    node.InitialConnectionReceiveWindow = init_conn_recv_window;
+    node.MaxConnectionReceiveWindow = max_conn_recv_window;
 }
 
 void tuicConstruct(Proxy &node, const std::string &group, const std::string &remarks, const std::string &add,
@@ -313,8 +405,10 @@ void tuicConstruct(Proxy &node, const std::string &group, const std::string &rem
                    const std::string &sni, const std::string &uuid, const std::string &udpRelayMode,
                    const std::string &token,
                    tribool udp, tribool tfo,
-                   tribool scv, tribool reduceRtt, tribool disableSni, uint16_t request_timeout,
-                   const std::string &underlying_proxy) {
+                   tribool scv, tribool reduceRtt, tribool disableSni, uint32_t request_timeout,
+                   const std::string &underlying_proxy,
+                   uint32_t max_datagram_frame_size, const std::string &heartbeat_interval,
+                   uint32_t max_open_streams) {
     commonConstruct(node, ProxyType::TUIC, group, remarks, add, port, udp, tfo, scv, tribool(), underlying_proxy);
     node.Password = password;
     node.Alpn = alpn;
@@ -326,6 +420,10 @@ void tuicConstruct(Proxy &node, const std::string &group, const std::string &rem
     node.UdpRelayMode = udpRelayMode;
     node.token = token;
     node.RequestTimeout = request_timeout;
+    // 新增 mihomo 参数
+    node.MaxDatagramFrameSize = max_datagram_frame_size;
+    node.HeartbeatInterval = heartbeat_interval;
+    node.MaxOpenStreams = max_open_streams;
 }
 
 
@@ -1207,6 +1305,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
         Proxy node;
         singleproxy = yamlnode[section][i];
         singleproxy["type"] >>= proxytype;
+        proxytype = toLower(proxytype);
         singleproxy["name"] >>= ps;
         singleproxy["server"] >>= server;
         singleproxy["port"] >>= port;
@@ -1471,20 +1570,59 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                     host = singleproxy["sni"].IsDefined()
                                ? safe_as<std::string>(singleproxy["sni"])
                                : safe_as<std::string>(singleproxy["servername"]);
-                    printf("host:%s", host.c_str());
                     singleproxy["reality-opts"]["public-key"] >>= pbk;
                     singleproxy["reality-opts"]["short-id"] >>= sid;
+                    tls = "reality";
                 }
                 singleproxy["flow"] >>= flow;
                 singleproxy["client-fingerprint"] >>= fp;
                 singleproxy["alpn"] >>= alpnList;
                 singleproxy["packet-encoding"] >>= packet_encoding;
                 singleproxy["encryption"] >>= encryption;
-                bool vless_udp;
-                singleproxy["udp"] >> vless_udp;
-                vlessConstruct(node, XRAY_DEFAULT_GROUP, ps, server, port, type, id, aid, net, "auto", flow, mode, path,
-                               host, "", tls, pbk, sid, fp, sni, alpnList, packet_encoding, udp, tribool(), tribool(),
-                               tribool(), "", v2ray_http_upgrade, encryption);
+                {
+                    // 新增 mihomo 参数读取
+                    std::string ip_version;
+                    tribool xudp_flag, packet_addr_flag, global_padding_flag, authenticated_length_flag;
+                    tribool ech_enable_flag, v2ray_http_upgrade_fast_open_flag;
+                    std::string ech_config, ws_early_data_header_name;
+                    uint32_t ws_max_early_data = 0;
+
+                    singleproxy["ip-version"] >>= ip_version;
+                    if (singleproxy["xudp"].IsDefined()) {
+                        xudp_flag = safe_as<std::string>(singleproxy["xudp"]) == "true";
+                    }
+                    if (singleproxy["packet-addr"].IsDefined()) {
+                        packet_addr_flag = safe_as<std::string>(singleproxy["packet-addr"]) == "true";
+                    }
+                    if (singleproxy["global-padding"].IsDefined()) {
+                        global_padding_flag = safe_as<std::string>(singleproxy["global-padding"]) == "true";
+                    }
+                    if (singleproxy["authenticated-length"].IsDefined()) {
+                        authenticated_length_flag = safe_as<std::string>(singleproxy["authenticated-length"]) == "true";
+                    }
+                    if (singleproxy["ech"].IsDefined()) {
+                        ech_enable_flag = safe_as<std::string>(singleproxy["ech"]) == "true";
+                    }
+                    singleproxy["ech-config"] >>= ech_config;
+                    if (singleproxy["ws-opts"].IsDefined()) {
+                        if (singleproxy["ws-opts"]["max-early-data"].IsDefined()) {
+                            ws_max_early_data = safe_as<uint32_t>(singleproxy["ws-opts"]["max-early-data"]);
+                        }
+                        singleproxy["ws-opts"]["early-data-header-name"] >>= ws_early_data_header_name;
+                        if (singleproxy["ws-opts"]["v2ray-http-upgrade-fast-open"].IsDefined()) {
+                            v2ray_http_upgrade_fast_open_flag = safe_as<std::string>(singleproxy["ws-opts"]["v2ray-http-upgrade-fast-open"]) == "true";
+                        }
+                    }
+
+                    bool vless_udp;
+                    singleproxy["udp"] >> vless_udp;
+                    vlessConstruct(node, XRAY_DEFAULT_GROUP, ps, server, port, type, id, aid, net, "auto", flow, mode, path,
+                                   host, "", tls, pbk, sid, fp, sni, alpnList, packet_encoding, udp, tribool(), tribool(),
+                                   tribool(), "", v2ray_http_upgrade, encryption, ip_version, xudp_flag,
+                                   packet_addr_flag, global_padding_flag, authenticated_length_flag,
+                                   ech_enable_flag, ech_config, ws_max_early_data, ws_early_data_header_name,
+                                   v2ray_http_upgrade_fast_open_flag);
+                }
                 break;
             case "hysteria"_hash:
                 group = HYSTERIA_DEFAULT_GROUP;
@@ -1505,9 +1643,36 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 singleproxy["protocol"] >> insecure;
                 singleproxy["ports"] >> ports;
                 sni = host;
-                hysteriaConstruct(node, group, ps, server, port, type, auth, "", host, up, down, alpn, obfsParam,
-                                  insecure, ports, sni,
-                                  udp, tfo, scv);
+                {
+                    // 新增 mihomo 参数读取
+                    std::string fingerprint_val, ca_val, ca_str_val;
+                    uint32_t recv_window_conn_val = 0, recv_window_val = 0, hop_interval_val = 0;
+                    tribool disable_mtu_discovery_flag, fast_open_flag;
+
+                    singleproxy["fingerprint"] >>= fingerprint_val;
+                    singleproxy["ca"] >>= ca_val;
+                    singleproxy["ca-str"] >>= ca_str_val;
+                    if (singleproxy["recv-window-conn"].IsDefined()) {
+                        recv_window_conn_val = safe_as<uint32_t>(singleproxy["recv-window-conn"]);
+                    }
+                    if (singleproxy["recv-window"].IsDefined()) {
+                        recv_window_val = safe_as<uint32_t>(singleproxy["recv-window"]);
+                    }
+                    if (singleproxy["disable-mtu-discovery"].IsDefined()) {
+                        disable_mtu_discovery_flag = safe_as<std::string>(singleproxy["disable-mtu-discovery"]) == "true";
+                    }
+                    if (singleproxy["hop-interval"].IsDefined()) {
+                        hop_interval_val = safe_as<uint32_t>(singleproxy["hop-interval"]);
+                    }
+                    if (singleproxy["fast-open"].IsDefined()) {
+                        fast_open_flag = safe_as<std::string>(singleproxy["fast-open"]) == "true";
+                    }
+
+                    hysteriaConstruct(node, group, ps, server, port, type, auth, "", host, up, down, alpn, obfsParam,
+                                      insecure, ports, sni, udp, tfo, scv, tribool(), "",
+                                      fingerprint_val, ca_val, ca_str_val, recv_window_conn_val, recv_window_val,
+                                      disable_mtu_discovery_flag, hop_interval_val, fast_open_flag);
+                }
                 break;
             case "hysteria2"_hash:
                 group = HYSTERIA2_DEFAULT_GROUP;
@@ -1538,8 +1703,42 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 singleproxy["alpn"][0] >>= alpn;
                 singleproxy["ports"] >> ports;
                 sni = host;
-                hysteria2Construct(node, group, ps, server, port, password, host, up, down, alpn, obfsParam,
-                                   obfsPassword, sni, public_key, ports, udp, tfo, scv);
+                {
+                    // 新增 mihomo 参数读取
+                    std::string mport_val, fingerprint_val, ca_val, ca_str_val;
+                    uint32_t cwnd_val = 0, hop_interval_val = 0;
+                    uint64_t init_stream_recv_window = 0, max_stream_recv_window = 0;
+                    uint64_t init_conn_recv_window = 0, max_conn_recv_window = 0;
+
+                    singleproxy["mport"] >>= mport_val;
+                    singleproxy["fingerprint"] >>= fingerprint_val;
+                    singleproxy["ca"] >>= ca_val;
+                    singleproxy["ca-str"] >>= ca_str_val;
+                    if (singleproxy["cwnd"].IsDefined()) {
+                        cwnd_val = safe_as<uint32_t>(singleproxy["cwnd"]);
+                    }
+                    if (singleproxy["hop-interval"].IsDefined()) {
+                        hop_interval_val = safe_as<uint32_t>(singleproxy["hop-interval"]);
+                    }
+                    if (singleproxy["initial-stream-receive-window"].IsDefined()) {
+                        init_stream_recv_window = safe_as<uint64_t>(singleproxy["initial-stream-receive-window"]);
+                    }
+                    if (singleproxy["max-stream-receive-window"].IsDefined()) {
+                        max_stream_recv_window = safe_as<uint64_t>(singleproxy["max-stream-receive-window"]);
+                    }
+                    if (singleproxy["initial-connection-receive-window"].IsDefined()) {
+                        init_conn_recv_window = safe_as<uint64_t>(singleproxy["initial-connection-receive-window"]);
+                    }
+                    if (singleproxy["max-connection-receive-window"].IsDefined()) {
+                        max_conn_recv_window = safe_as<uint64_t>(singleproxy["max-connection-receive-window"]);
+                    }
+
+                    hysteria2Construct(node, group, ps, server, port, password, host, up, down, alpn, obfsParam,
+                                       obfsPassword, sni, public_key, ports, udp, tfo, scv, "",
+                                       mport_val, fingerprint_val, ca_val, ca_str_val, cwnd_val, hop_interval_val,
+                                       init_stream_recv_window, max_stream_recv_window,
+                                       init_conn_recv_window, max_conn_recv_window);
+                }
                 break;
             case "tuic"_hash:
                 group = TUIC_DEFAULT_GROUP;
@@ -2917,6 +3116,7 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
             if (singboxNode.HasMember("type") && singboxNode["type"].IsString()) {
                 Proxy node;
                 proxytype = singboxNode["type"].GetString();
+                proxytype = toLower(proxytype);
                 ps = GetMember(singboxNode, "tag");
                 server = GetMember(singboxNode, "server");
                 port = GetMember(singboxNode, "server_port");

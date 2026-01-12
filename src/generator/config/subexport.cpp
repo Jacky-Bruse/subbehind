@@ -135,7 +135,7 @@ bool applyMatcher(const std::string &rule, std::string &real_rule, const Proxy &
         {ProxyType::HTTPS, "HTTPS"},
         {ProxyType::SOCKS5, "SOCKS5"},
         {ProxyType::WireGuard, "WIREGUARD"},
-        {ProxyType::VLESS, "VLESS"},
+        {ProxyType::VLESS, "Vless"},
         {ProxyType::Hysteria, "HYSTERIA"},
         {ProxyType::Hysteria2, "HYSTERIA2"}
     };
@@ -153,7 +153,9 @@ bool applyMatcher(const std::string &rule, std::string &real_rule, const Proxy &
         real_rule = ret_real_rule;
         if (node.Type == ProxyType::Unknown)
             return false;
-        return regMatch(types.at(node.Type), target);
+        std::string target_lower = toLower(target);
+        std::string type_lower = toLower(types.at(node.Type));
+        return regMatch(type_lower, target_lower);
     } else if (startsWith(rule, "!!PORT=")) {
         regGetMatch(rule, port_regex, 3, 0, &target, &ret_real_rule);
         real_rule = ret_real_rule;
@@ -283,6 +285,29 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 singleproxy["password"] = x.Password;
                 if (std::all_of(x.Password.begin(), x.Password.end(), ::isdigit) && !x.Password.empty())
                     singleproxy["password"].SetTag("str");
+                // 新增 mihomo 参数输出
+                if (!x.UdpOverTcp.is_undef()) {
+                    singleproxy["udp-over-tcp"] = x.UdpOverTcp.get();
+                    if (x.UdpOverTcpVersion > 0)
+                        singleproxy["udp-over-tcp-version"] = x.UdpOverTcpVersion;
+                }
+                if (!x.SmuxEnabled.is_undef() && x.SmuxEnabled.get()) {
+                    singleproxy["smux"]["enabled"] = true;
+                    if (!x.SmuxProtocol.empty())
+                        singleproxy["smux"]["protocol"] = x.SmuxProtocol;
+                    if (x.SmuxMaxConnections > 0)
+                        singleproxy["smux"]["max-connections"] = x.SmuxMaxConnections;
+                    if (x.SmuxMinStreams > 0)
+                        singleproxy["smux"]["min-streams"] = x.SmuxMinStreams;
+                    if (x.SmuxMaxStreams > 0)
+                        singleproxy["smux"]["max-streams"] = x.SmuxMaxStreams;
+                    if (!x.SmuxPadding.is_undef())
+                        singleproxy["smux"]["padding"] = x.SmuxPadding.get();
+                    if (!x.SmuxStatistic.is_undef())
+                        singleproxy["smux"]["statistic"] = x.SmuxStatistic.get();
+                    if (!x.SmuxOnlyTcp.is_undef())
+                        singleproxy["smux"]["only-tcp"] = x.SmuxOnlyTcp.get();
+                }
                 switch (hash_(x.Plugin)) {
                     case "simple-obfs"_hash:
                     case "obfs-local"_hash:
@@ -318,6 +343,11 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["skip-cert-verify"] = scv.get();
                 if (!x.ServerName.empty())
                     singleproxy["servername"] = x.ServerName;
+                // 新增 mihomo 参数输出
+                if (!x.ClientFingerprint.empty())
+                    singleproxy["client-fingerprint"] = x.ClientFingerprint;
+                if (!x.IpVersion.empty())
+                    singleproxy["ip-version"] = x.IpVersion;
                 switch (hash_(x.TransferProtocol)) {
                     case "tcp"_hash:
                         break;
@@ -329,6 +359,14 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                                 singleproxy["ws-opts"]["headers"]["Host"] = x.Host;
                             if (!x.Edge.empty())
                                 singleproxy["ws-opts"]["headers"]["Edge"] = x.Edge;
+                            if (!x.V2rayHttpUpgrade.is_undef())
+                                singleproxy["ws-opts"]["v2ray-http-upgrade"] = x.V2rayHttpUpgrade.get();
+                            if (!x.V2rayHttpUpgradeFastOpen.is_undef())
+                                singleproxy["ws-opts"]["v2ray-http-upgrade-fast-open"] = x.V2rayHttpUpgradeFastOpen.get();
+                            if (x.WsMaxEarlyData > 0)
+                                singleproxy["ws-opts"]["max-early-data"] = x.WsMaxEarlyData;
+                            if (!x.WsEarlyDataHeaderName.empty())
+                                singleproxy["ws-opts"]["early-data-header-name"] = x.WsEarlyDataHeaderName;
                         } else {
                             singleproxy["ws-path"] = x.Path;
                             if (!x.Host.empty())
@@ -435,6 +473,16 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 }
                 if (!scv.is_undef())
                     singleproxy["skip-cert-verify"] = scv.get();
+                // 新增 mihomo 参数输出
+                if (!x.ClientFingerprint.empty())
+                    singleproxy["client-fingerprint"] = x.ClientFingerprint;
+                if (!x.IpVersion.empty())
+                    singleproxy["ip-version"] = x.IpVersion;
+                if (!x.TrojanSsMethod.empty()) {
+                    singleproxy["ss-opts"]["method"] = x.TrojanSsMethod;
+                    if (!x.TrojanSsPassword.empty())
+                        singleproxy["ss-opts"]["password"] = x.TrojanSsPassword;
+                }
                 switch (hash_(x.TransferProtocol)) {
                     case "tcp"_hash:
                         break;
@@ -489,7 +537,10 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.Ports.empty()) {
                     singleproxy["ports"] = x.Ports;
                 }
-                if (!tfo.is_undef()) {
+                // fast-open: 节点设置优先于全局设置
+                if (!x.FastOpen.is_undef()) {
+                    singleproxy["fast-open"] = x.FastOpen.get();
+                } else if (!tfo.is_undef()) {
                     singleproxy["fast-open"] = tfo.get();
                 }
                 if (!x.FakeType.empty())
@@ -504,12 +555,29 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["alpn"].push_back(x.Alpn);
                 if (!x.OBFSParam.empty())
                     singleproxy["obfs"] = x.OBFSParam;
+                // 新增 mihomo 参数输出
+                if (!x.Fingerprint.empty())
+                    singleproxy["fingerprint"] = x.Fingerprint;
+                if (!x.Ca.empty())
+                    singleproxy["ca"] = x.Ca;
+                if (!x.CaStr.empty())
+                    singleproxy["ca-str"] = x.CaStr;
+                if (x.RecvWindowConn > 0)
+                    singleproxy["recv-window-conn"] = x.RecvWindowConn;
+                if (x.RecvWindow > 0)
+                    singleproxy["recv-window"] = x.RecvWindow;
+                if (!x.DisableMtuDiscovery.is_undef())
+                    singleproxy["disable-mtu-discovery"] = x.DisableMtuDiscovery.get();
+                if (x.HopInterval > 0)
+                    singleproxy["hop-interval"] = x.HopInterval;
                 break;
             case ProxyType::Hysteria2:
                 singleproxy["type"] = "hysteria2";
                 singleproxy["password"] = x.Password;
                 singleproxy["auth"] = x.Password;
-                if (!x.PublicKey.empty()) {
+                if (!x.CaStr.empty()) {
+                    singleproxy["ca-str"] = x.CaStr;
+                } else if (!x.PublicKey.empty()) {
                     singleproxy["ca-str"] = x.PublicKey;
                 }
                 if (!x.ServerName.empty()) {
@@ -529,6 +597,25 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["obfs-password"] = x.OBFSPassword;
                 if (!x.Ports.empty())
                     singleproxy["ports"] = x.Ports;
+                // 新增 mihomo 参数输出
+                if (!x.Mport.empty())
+                    singleproxy["mport"] = x.Mport;
+                if (!x.Fingerprint.empty())
+                    singleproxy["fingerprint"] = x.Fingerprint;
+                if (!x.Ca.empty())
+                    singleproxy["ca"] = x.Ca;
+                if (x.CWND > 0)
+                    singleproxy["cwnd"] = x.CWND;
+                if (x.HopInterval > 0)
+                    singleproxy["hop-interval"] = x.HopInterval;
+                if (x.InitialStreamReceiveWindow > 0)
+                    singleproxy["initial-stream-receive-window"] = x.InitialStreamReceiveWindow;
+                if (x.MaxStreamReceiveWindow > 0)
+                    singleproxy["max-stream-receive-window"] = x.MaxStreamReceiveWindow;
+                if (x.InitialConnectionReceiveWindow > 0)
+                    singleproxy["initial-connection-receive-window"] = x.InitialConnectionReceiveWindow;
+                if (x.MaxConnectionReceiveWindow > 0)
+                    singleproxy["max-connection-receive-window"] = x.MaxConnectionReceiveWindow;
                 break;
             case ProxyType::TUIC:
                 singleproxy["type"] = "tuic";
@@ -548,9 +635,12 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["skip-cert-verify"] = scv.get();
                 if (!x.Alpn.empty())
                     singleproxy["alpn"].push_back(x.Alpn);
-                singleproxy["disable-sni"] = x.DisableSni.get();
-                singleproxy["reduce-rtt"] = x.ReduceRtt.get();
-                singleproxy["request-timeout"] = x.RequestTimeout;
+                if (!x.DisableSni.is_undef())
+                    singleproxy["disable-sni"] = x.DisableSni.get();
+                if (!x.ReduceRtt.is_undef())
+                    singleproxy["reduce-rtt"] = x.ReduceRtt.get();
+                if (x.RequestTimeout > 0)
+                    singleproxy["request-timeout"] = x.RequestTimeout;
                 if (!x.UdpRelayMode.empty()) {
                     if (x.UdpRelayMode == "native" || x.UdpRelayMode == "quic") {
                         singleproxy["udp-relay-mode"] = x.UdpRelayMode;
@@ -559,6 +649,13 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.CongestionControl.empty()) {
                     singleproxy["congestion-controller"] = x.CongestionControl;
                 }
+                // 新增 mihomo 参数输出
+                if (x.MaxDatagramFrameSize > 0)
+                    singleproxy["max-datagram-frame-size"] = x.MaxDatagramFrameSize;
+                if (!x.HeartbeatInterval.empty())
+                    singleproxy["heartbeat-interval"] = x.HeartbeatInterval;
+                if (x.MaxOpenStreams > 0)
+                    singleproxy["max-open-streams"] = x.MaxOpenStreams;
                 break;
             case ProxyType::AnyTLS:
                 singleproxy["type"] = "anytls";
@@ -612,8 +709,12 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 }
                 if (!tfo.is_undef())
                     singleproxy["tfo"] = tfo.get();
-                if (xudp && udp)
+                // XUDP 支持
+                if (!x.XUDP.is_undef()) {
+                    singleproxy["xudp"] = x.XUDP.get();
+                } else if (xudp && udp) {
                     singleproxy["xudp"] = true;
+                }
                 if (!x.PacketEncoding.empty()) {
                     singleproxy["packet-encoding"] = x.PacketEncoding;
                 }
@@ -631,11 +732,32 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.ShortId.empty()) {
                     singleproxy["reality-opts"]["short-id"] = "" + x.ShortId;
                 }
-                if (!x.PublicKey.empty() || x.Flow == "xtls-rprx-vision") {
+                // 客户端指纹
+                if (!x.ClientFingerprint.empty()) {
+                    singleproxy["client-fingerprint"] = x.ClientFingerprint;
+                } else if (!x.Fingerprint.empty()) {
+                    singleproxy["client-fingerprint"] = x.Fingerprint;
+                } else if (!x.PublicKey.empty() || x.Flow == "xtls-rprx-vision") {
                     singleproxy["client-fingerprint"] = "chrome";
                 }
-                if (!x.Fingerprint.empty()) {
-                    singleproxy["client-fingerprint"] = x.Fingerprint;
+                // 新增 mihomo 参数输出
+                if (!x.IpVersion.empty()) {
+                    singleproxy["ip-version"] = x.IpVersion;
+                }
+                if (!x.PacketAddr.is_undef()) {
+                    singleproxy["packet-addr"] = x.PacketAddr.get();
+                }
+                if (!x.GlobalPadding.is_undef()) {
+                    singleproxy["global-padding"] = x.GlobalPadding.get();
+                }
+                if (!x.AuthenticatedLength.is_undef()) {
+                    singleproxy["authenticated-length"] = x.AuthenticatedLength.get();
+                }
+                if (!x.EchEnable.is_undef()) {
+                    singleproxy["ech"] = x.EchEnable.get();
+                }
+                if (!x.EchConfig.empty()) {
+                    singleproxy["ech-config"] = x.EchConfig;
                 }
                 switch (hash_(x.TransferProtocol)) {
                     case "tcp"_hash:
@@ -651,6 +773,15 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                                 singleproxy["ws-opts"]["headers"]["Edge"] = x.Edge;
                             if (!x.V2rayHttpUpgrade.is_undef()) {
                                 singleproxy["ws-opts"]["v2ray-http-upgrade"] = x.V2rayHttpUpgrade.get();
+                            }
+                            if (!x.V2rayHttpUpgradeFastOpen.is_undef()) {
+                                singleproxy["ws-opts"]["v2ray-http-upgrade-fast-open"] = x.V2rayHttpUpgradeFastOpen.get();
+                            }
+                            if (x.WsMaxEarlyData > 0) {
+                                singleproxy["ws-opts"]["max-early-data"] = x.WsMaxEarlyData;
+                            }
+                            if (!x.WsEarlyDataHeaderName.empty()) {
+                                singleproxy["ws-opts"]["early-data-header-name"] = x.WsEarlyDataHeaderName;
                             }
                         } else {
                             singleproxy["ws-path"] = x.Path;
@@ -2262,7 +2393,7 @@ proxyToLoon(std::vector<Proxy> &nodes, const std::string &base_conf,
             case ProxyType::VLESS:
                 if (flow != "xtls-rprx-vision") {
                     if (transproto == "ws") {
-                        proxy = "VLESS," + hostname + "," + port + ",\"" + id + "\"" +
+                        proxy = "Vless," + hostname + "," + port + ",\"" + id + "\"" +
                             ",path=" + path + ",host=" + host + ",transport=" + transproto +
                             ",udp=" + (udp.get() ? "true" : "false") + ",over-tls=" + (
                                 tlssecure ? "true" : "false") + ",sni=" + sni;
@@ -2270,7 +2401,7 @@ proxyToLoon(std::vector<Proxy> &nodes, const std::string &base_conf,
                         continue;
                     }
                 } else {
-                    proxy = "VLESS," + hostname + "," + port + ",\"" + id + "\",flow=" + flow + ",public-key=\"" + pk +
+                    proxy = "Vless," + hostname + "," + port + ",\"" + id + "\",flow=" + flow + ",public-key=\"" + pk +
                             "\",short-id=" + shortId + ",udp=" + (udp.get() ? "true" : "false") + ",over-tls=" + (
                                 tlssecure ? "true" : "false") + ",sni=" + sni;
                 }

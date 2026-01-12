@@ -9,3 +9,5 @@ scripts/yaml-cpp
 src/.DS_Store
 
 build
+.claude/settings.local.json
+tmpclaude-*-cwd
