@@ -175,15 +175,16 @@ dns:
 # =========================================================
 # ⚙️ TProxy 透明代理配置（TCP + UDP）
 # =========================================================
-tproxy-port: 7895
+# tproxy-port: 7895
 tun:
   enable: true
-  stack: system
-  dns-hijack:
-    - tcp://any:53
-    - udp://any:53
+  stack: mixed
   auto-route: true
   auto-detect-interface: true
+  dns-hijack:
+    - any:53
+    - tcp://any:53
+  strict-route: true
 
 {% if local.clash.new_field_name == "true" %}
 proxies: ~
