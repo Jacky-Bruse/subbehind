@@ -29,27 +29,30 @@ profile:
   store-selected: true
   store-fake-ip: true  # ✅ 启用保存 Fake IP，避免重复生成
 
-# ---- Sniffer 自动识别域名 ----
 sniffer:
   enable: true
-  force-dns-mapping: true
-  parse-pure-ip: true
   override-destination: true
+  force-dns-mapping: false
+  parse-pure-ip: false
+
+sniffer:
+  enable: true
+  force-dns-mapping: false
+  parse-pure-ip: false       # 关键
+  override-destination: false # 关键
+  
   sniff:
-    QUIC:
-      ports: [443, 8443]
     TLS:
       ports: [443, 8443]
     HTTP:
       ports: [80, 8080-8880]
-      override-destination: true
+    QUIC:
+      ports: [443, 8443]
+  
   force-domain:
     - +.openai.com
-    - chat.openai.com
     - +.chatgpt.com
     - +.v2ex.com
-  skip-domain:
-    - Mijia Cloud
 
 dns:
   enable: true
