@@ -31,12 +31,6 @@ profile:
 
 sniffer:
   enable: true
-  override-destination: true
-  force-dns-mapping: false
-  parse-pure-ip: false
-
-sniffer:
-  enable: true
   force-dns-mapping: false
   parse-pure-ip: false       # 关键
   override-destination: false # 关键
