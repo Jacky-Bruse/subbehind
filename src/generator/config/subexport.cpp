@@ -733,12 +733,14 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["reality-opts"]["short-id"] = "" + x.ShortId;
                 }
                 // 客户端指纹
-                if (!x.ClientFingerprint.empty()) {
-                    singleproxy["client-fingerprint"] = x.ClientFingerprint;
-                } else if (!x.Fingerprint.empty()) {
-                    singleproxy["client-fingerprint"] = x.Fingerprint;
-                } else if (!x.PublicKey.empty() || x.Flow == "xtls-rprx-vision") {
-                    singleproxy["client-fingerprint"] = "chrome";
+                if (!x.PublicKey.empty() && !x.ShortId.empty()) {
+                    if (!x.ClientFingerprint.empty()) {
+                        singleproxy["client-fingerprint"] = x.ClientFingerprint;
+                    } else if (!x.Fingerprint.empty()) {
+                        singleproxy["client-fingerprint"] = x.Fingerprint;
+                    } else {
+                        singleproxy["client-fingerprint"] = "random";
+                    }
                 }
                 // 新增 mihomo 参数输出
                 if (!x.IpVersion.empty()) {
