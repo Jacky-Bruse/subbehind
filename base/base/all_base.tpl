@@ -29,12 +29,12 @@ profile:
   store-selected: true
   store-fake-ip: true  # ✅ 启用保存 Fake IP，避免重复生成
 
+
 sniffer:
   enable: true
-  force-dns-mapping: false
-  parse-pure-ip: false       # 关键
-  override-destination: false # 关键
-  
+  force-dns-mapping: true
+  parse-pure-ip: true
+  override-destination: true
   sniff:
     TLS:
       ports: [443, 8443]
@@ -42,11 +42,18 @@ sniffer:
       ports: [80, 8080-8880]
     QUIC:
       ports: [443, 8443]
-  
   force-domain:
     - +.openai.com
     - +.chatgpt.com
     - +.v2ex.com
+    # 建议补上 Google 登录链路关键域名
+    - +.google.com
+    - +.googleapis.com
+    - android.clients.google.com
+    - accounts.google.com
+    - oauth2.googleapis.com
+    - play.googleapis.com
+
 
 dns:
   enable: true
