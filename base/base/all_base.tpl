@@ -84,9 +84,6 @@ dns:
   nameserver:
     - https://cloudflare-dns.com/dns-query
     - https://dns.google/dns-query
-    # 也可以保留 TLS，但 Https (DoH) 在代理隧道中通常表现更好
-    - tls://1.1.1.1:853 
-    - tls://8.8.8.8:853
 
   # 策略分流 (核心优化: 国内域名指定走国内 DoH，准确且防污染)
   nameserver-policy:
