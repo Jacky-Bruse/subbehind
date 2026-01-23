@@ -2,8 +2,8 @@
 
 Utility to convert between various proxy subscription formats.
 
-original git: https://github.com/asdlokj1qpi23/subconverter
-
+original git: 
+https://github.com/MetaCubeX/subconverter
 [![Build Status](https://github.com/asdlokj1qpi233/subconverter/actions/workflows/docker.yml/badge.svg)](https://github.com/asdlokj1qpi233/subconverter/actions)
 [![GitHub tag (latest SemVer)](https://img.shields.io/github/tag/asdlokj1qpi233/subconverter.svg)](https://github.com/asdlokj1qpi23/subconverter/tags)
 [![GitHub release](https://img.shields.io/github/release/asdlokj1qpi233/subconverter.svg)](https://github.com/asdlokj1qpi233/subconverter/releases)
