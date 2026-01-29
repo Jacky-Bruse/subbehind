@@ -1,4 +1,5 @@
 #include <string>
+#include <unordered_set>
 
 #include "handler/settings.h"
 #include "utils/logger.h"
@@ -18,6 +19,82 @@ string_array SurgeRuleTypes = {basic_types, "IP-CIDR6", "USER-AGENT", "URL-REGEX
 string_array QuanXRuleTypes = {basic_types, "USER-AGENT", "HOST", "HOST-SUFFIX", "HOST-KEYWORD"};
 string_array SurfRuleTypes = {basic_types, "IP-CIDR6", "PROCESS-NAME", "IN-PORT", "DEST-PORT", "SRC-IP"};
 string_array SingBoxRuleTypes = {basic_types, "IP-VERSION", "INBOUND", "PROTOCOL", "NETWORK", "GEOSITE", "SRC-GEOIP", "DOMAIN-REGEX", "PROCESS-NAME", "PROCESS-PATH", "PACKAGE-NAME", "PORT", "PORT-RANGE", "SRC-PORT", "SRC-PORT-RANGE", "USER", "USER-ID"};
+
+/// IP 类规则类型，这些规则需要检查 no-resolve flag
+static const string_array IpRuleTypes = {"IP-CIDR", "IP-CIDR6", "GEOIP", "SRC-IP-CIDR", "SRC-GEOIP", "SRC-IP-ASN", "IP-SUFFIX", "SRC-IP-SUFFIX", "IP-ASN"};
+
+/// 提取规则去重 key
+/// 去重 key = 规则匹配条件（不含策略组，但保留匹配相关的 flag）
+static std::string extractRuleKey(const std::string &rule)
+{
+    if(rule.empty())
+        return "";
+
+    // 特判 AND/OR/NOT 规则
+    // 格式：TYPE,(...expression...),group
+    if(startsWith(rule, "AND") || startsWith(rule, "OR") || startsWith(rule, "NOT"))
+    {
+        // 找到第一个 ,( 的位置
+        auto exprStart = rule.find(",(");
+        if(exprStart == std::string::npos)
+            return rule; // 格式异常，返回原规则
+
+        // 从末尾向前找最后一个 ) 的位置
+        auto exprEnd = rule.rfind(')');
+        if(exprEnd == std::string::npos || exprEnd <= exprStart)
+            return rule; // 格式异常，返回原规则
+
+        // key = TYPE + 从 exprStart 到 exprEnd（含括号）的内容
+        return rule.substr(0, exprEnd + 1);
+    }
+
+    // 按逗号分割
+    string_view_array parts;
+    split(parts, rule, ',');
+    if(parts.empty())
+        return "";
+
+    std::string type(parts[0]);
+
+    // 特判无 pattern 规则：MATCH 或 FINAL
+    if(type == "MATCH" || type == "FINAL")
+        return type;
+
+    // 至少需要两部分：TYPE,pattern
+    if(parts.size() < 2)
+        return rule;
+
+    std::string pattern(parts[1]);
+
+    // RULE-SET / SUB-RULE 规则
+    // 格式：TYPE,url/name,group[,配置参数...]
+    // key = TYPE,url/name
+    if(type == "RULE-SET" || type == "SUB-RULE")
+        return type + "," + pattern;
+
+    // 普通规则
+    // 格式：TYPE,pattern[,group][,flag]
+    std::string key = type + "," + pattern;
+
+    // 判断是否为 IP 类规则
+    bool isIpType = std::any_of(IpRuleTypes.begin(), IpRuleTypes.end(),
+        [&type](const std::string &t) { return type == t; });
+
+    // IP 类规则检查 no-resolve flag
+    if(isIpType && parts.size() > 2)
+    {
+        for(size_t i = 2; i < parts.size(); i++)
+        {
+            if(parts[i] == "no-resolve")
+            {
+                key += ",no-resolve";
+                break;
+            }
+        }
+    }
+
+    return key;
+}
 
 std::string convertRuleset(const std::string &content, int type)
 {
@@ -132,6 +209,7 @@ void rulesetToClash(YAML::Node &base_rule, std::vector<RulesetContent> &ruleset_
     const std::string field_name = new_field_name ? "rules" : "Rule";
     YAML::Node rules;
     size_t total_rules = 0;
+    std::unordered_set<std::string> seenKeys; // 去重用的 seen set
 
     if(!overwrite_original_rules && base_rule[field_name].IsDefined())
         rules = base_rule[field_name];
@@ -154,8 +232,14 @@ void rulesetToClash(YAML::Node &base_rule, std::vector<RulesetContent> &ruleset_
             if(startsWith(strLine, "FINAL"))
                 strLine.replace(0, 5, "MATCH");
             strLine = transformRuleToCommon(temp, strLine, rule_group);
-            allRules.emplace_back(strLine);
-            total_rules++;
+            // 去重检查
+            std::string key = extractRuleKey(strLine);
+            if(seenKeys.find(key) == seenKeys.end())
+            {
+                seenKeys.insert(key);
+                allRules.emplace_back(strLine);
+                total_rules++;
+            }
             continue;
         }
         retrieved_rules = convertRuleset(retrieved_rules, x.rule_type);
@@ -180,7 +264,14 @@ void rulesetToClash(YAML::Node &base_rule, std::vector<RulesetContent> &ruleset_
                 strLine = trimWhitespace(strLine);
             }
             strLine = transformRuleToCommon(temp, strLine, rule_group);
-            allRules.emplace_back(strLine);
+            // 去重检查
+            std::string key = extractRuleKey(strLine);
+            if(seenKeys.find(key) == seenKeys.end())
+            {
+                seenKeys.insert(key);
+                allRules.emplace_back(strLine);
+                total_rules++;
+            }
         }
     }
 
@@ -199,6 +290,7 @@ std::string rulesetToClashStr(YAML::Node &base_rule, std::vector<RulesetContent>
     const std::string field_name = new_field_name ? "rules" : "Rule";
     std::string output_content = "\n" + field_name + ":\n";
     size_t total_rules = 0;
+    std::unordered_set<std::string> seenKeys; // 去重用的 seen set
 
     if(!overwrite_original_rules && base_rule[field_name].IsDefined())
     {
@@ -225,8 +317,14 @@ std::string rulesetToClashStr(YAML::Node &base_rule, std::vector<RulesetContent>
             if(startsWith(strLine, "FINAL"))
                 strLine.replace(0, 5, "MATCH");
             strLine = transformRuleToCommon(temp, strLine, rule_group);
-            output_content += "  - " + strLine + "\n";
-            total_rules++;
+            // 去重检查
+            std::string key = extractRuleKey(strLine);
+            if(seenKeys.find(key) == seenKeys.end())
+            {
+                seenKeys.insert(key);
+                output_content += "  - " + strLine + "\n";
+                total_rules++;
+            }
             continue;
         }
         retrieved_rules = convertRuleset(retrieved_rules, x.rule_type);
@@ -251,26 +349,31 @@ std::string rulesetToClashStr(YAML::Node &base_rule, std::vector<RulesetContent>
                 strLine = trimWhitespace(strLine);
             }
 
+            std::string finalRule;
             //AND & OR & NOT
             if(startsWith(strLine, "AND") || startsWith(strLine, "OR") || startsWith(strLine, "NOT"))
             {
-                output_content += "  - " + strLine + "," + rule_group + "\n";
+                finalRule = strLine + "," + rule_group;
             }
             //SUB-RULE & RULE-SET
             else if (startsWith(strLine, "SUB-RULE") || startsWith(strLine, "RULE-SET"))
             {
-                output_content += "  - " + strLine + "\n";
+                finalRule = strLine;
             }
             else
             //OTHER
             {
-                strLine = transformRuleToCommon(temp, strLine, rule_group);
-                output_content += "  - " + strLine + "\n";
+                finalRule = transformRuleToCommon(temp, strLine, rule_group);
             }
 
-            //strLine = transformRuleToCommon(temp, strLine, rule_group);
-            //output_content += "  - " + strLine + "\n";
-            total_rules++;
+            // 去重检查
+            std::string key = extractRuleKey(finalRule);
+            if(seenKeys.find(key) == seenKeys.end())
+            {
+                seenKeys.insert(key);
+                output_content += "  - " + finalRule + "\n";
+                total_rules++;
+            }
         }
     }
     return output_content;
@@ -282,6 +385,7 @@ void rulesetToSurge(INIReader &base_rule, std::vector<RulesetContent> &ruleset_c
     std::string rule_group, rule_path, rule_path_typed, retrieved_rules, strLine;
     std::stringstream strStrm;
     size_t total_rules = 0;
+    std::unordered_set<std::string> seenKeys; // 去重用的 seen set，路径 A 和路径 B 共用
 
     switch(surge_ver) //other version: -3 for Surfboard, -4 for Loon
     {
@@ -339,8 +443,14 @@ void rulesetToSurge(INIReader &base_rule, std::vector<RulesetContent> &ruleset_c
                     strLine = transformRuleToCommon(temp, strLine, rule_group);
             }
             strLine = replaceAllDistinct(strLine, ",,", ",");
-            allRules.emplace_back(strLine);
-            total_rules++;
+            // 去重检查
+            std::string key = extractRuleKey(strLine);
+            if(seenKeys.find(key) == seenKeys.end())
+            {
+                seenKeys.insert(key);
+                allRules.emplace_back(strLine);
+                total_rules++;
+            }
             continue;
         }
         else
@@ -348,7 +458,13 @@ void rulesetToSurge(INIReader &base_rule, std::vector<RulesetContent> &ruleset_c
             if(surge_ver == -1 && x.rule_type == RULESET_QUANX && isLink(rule_path))
             {
                 strLine = rule_path + ", tag=" + rule_group + ", force-policy=" + rule_group + ", enabled=true";
-                base_rule.set("filter_remote", "{NONAME}", strLine);
+                // 去重检查：remote rule 使用 url 作为 key
+                std::string key = rule_path;
+                if(seenKeys.find(key) == seenKeys.end())
+                {
+                    seenKeys.insert(key);
+                    base_rule.set("filter_remote", "{NONAME}", strLine);
+                }
                 continue;
             }
             if(fileExist(rule_path))
@@ -358,20 +474,38 @@ void rulesetToSurge(INIReader &base_rule, std::vector<RulesetContent> &ruleset_c
                     strLine = "RULE-SET," + remote_path_prefix + "/getruleset?type=1&url=" + urlSafeBase64Encode(rule_path_typed) + "," + rule_group;
                     if(x.update_interval)
                         strLine += ",update-interval=" + std::to_string(x.update_interval);
-                    allRules.emplace_back(strLine);
+                    // 去重检查
+                    std::string key = extractRuleKey(strLine);
+                    if(seenKeys.find(key) == seenKeys.end())
+                    {
+                        seenKeys.insert(key);
+                        allRules.emplace_back(strLine);
+                    }
                     continue;
                 }
                 else if(surge_ver == -1 && !remote_path_prefix.empty())
                 {
                     strLine = remote_path_prefix + "/getruleset?type=2&url=" + urlSafeBase64Encode(rule_path_typed) + "&group=" + urlSafeBase64Encode(rule_group);
                     strLine += ", tag=" + rule_group + ", enabled=true";
-                    base_rule.set("filter_remote", "{NONAME}", strLine);
+                    // 去重检查：remote rule 使用 url 作为 key
+                    std::string key = remote_path_prefix + "/getruleset?type=2&url=" + urlSafeBase64Encode(rule_path_typed);
+                    if(seenKeys.find(key) == seenKeys.end())
+                    {
+                        seenKeys.insert(key);
+                        base_rule.set("filter_remote", "{NONAME}", strLine);
+                    }
                     continue;
                 }
                 else if(surge_ver == -4 && !remote_path_prefix.empty())
                 {
                     strLine = remote_path_prefix + "/getruleset?type=1&url=" + urlSafeBase64Encode(rule_path_typed) + "," + rule_group;
-                    base_rule.set("Remote Rule", "{NONAME}", strLine);
+                    // 去重检查：remote rule 使用 url 作为 key
+                    std::string key = remote_path_prefix + "/getruleset?type=1&url=" + urlSafeBase64Encode(rule_path_typed);
+                    if(seenKeys.find(key) == seenKeys.end())
+                    {
+                        seenKeys.insert(key);
+                        base_rule.set("Remote Rule", "{NONAME}", strLine);
+                    }
                     continue;
                 }
             }
@@ -392,20 +526,38 @@ void rulesetToSurge(INIReader &base_rule, std::vector<RulesetContent> &ruleset_c
                     if(x.update_interval)
                         strLine += ",update-interval=" + std::to_string(x.update_interval);
 
-                    allRules.emplace_back(strLine);
+                    // 去重检查
+                    std::string key = extractRuleKey(strLine);
+                    if(seenKeys.find(key) == seenKeys.end())
+                    {
+                        seenKeys.insert(key);
+                        allRules.emplace_back(strLine);
+                    }
                     continue;
                 }
                 else if(surge_ver == -1 && !remote_path_prefix.empty())
                 {
                     strLine = remote_path_prefix + "/getruleset?type=2&url=" + urlSafeBase64Encode(rule_path_typed) + "&group=" + urlSafeBase64Encode(rule_group);
                     strLine += ", tag=" + rule_group + ", enabled=true";
-                    base_rule.set("filter_remote", "{NONAME}", strLine);
+                    // 去重检查：remote rule 使用 url 作为 key
+                    std::string key = remote_path_prefix + "/getruleset?type=2&url=" + urlSafeBase64Encode(rule_path_typed);
+                    if(seenKeys.find(key) == seenKeys.end())
+                    {
+                        seenKeys.insert(key);
+                        base_rule.set("filter_remote", "{NONAME}", strLine);
+                    }
                     continue;
                 }
                 else if(surge_ver == -4)
                 {
                     strLine = rule_path + "," + rule_group;
-                    base_rule.set("Remote Rule", "{NONAME}", strLine);
+                    // 去重检查：remote rule 使用 url 作为 key
+                    std::string key = rule_path;
+                    if(seenKeys.find(key) == seenKeys.end())
+                    {
+                        seenKeys.insert(key);
+                        base_rule.set("Remote Rule", "{NONAME}", strLine);
+                    }
                     continue;
                 }
             }
@@ -478,8 +630,14 @@ void rulesetToSurge(INIReader &base_rule, std::vector<RulesetContent> &ruleset_c
                     if(!startsWith(strLine, "AND") && !startsWith(strLine, "OR") && !startsWith(strLine, "NOT"))
                         strLine = transformRuleToCommon(temp, strLine, rule_group);
                 }
-                allRules.emplace_back(strLine);
-                total_rules++;
+                // 去重检查
+                std::string key = extractRuleKey(strLine);
+                if(seenKeys.find(key) == seenKeys.end())
+                {
+                    seenKeys.insert(key);
+                    allRules.emplace_back(strLine);
+                    total_rules++;
+                }
             }
         }
     }
