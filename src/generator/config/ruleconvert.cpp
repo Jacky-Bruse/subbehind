@@ -25,6 +25,7 @@ static const string_array IpRuleTypes = {"IP-CIDR", "IP-CIDR6", "GEOIP", "SRC-IP
 
 /// 提取规则去重 key
 /// 去重 key = 规则匹配条件（不含策略组，但保留匹配相关的 flag）
+/// 返回小写归一化的 key，确保大小写不同的相同规则被正确去重
 static std::string extractRuleKey(const std::string &rule)
 {
     if(rule.empty())
@@ -37,15 +38,15 @@ static std::string extractRuleKey(const std::string &rule)
         // 找到第一个 ,( 的位置
         auto exprStart = rule.find(",(");
         if(exprStart == std::string::npos)
-            return rule; // 格式异常，返回原规则
+            return toLower(rule); // 格式异常，返回原规则
 
         // 从末尾向前找最后一个 ) 的位置
         auto exprEnd = rule.rfind(')');
         if(exprEnd == std::string::npos || exprEnd <= exprStart)
-            return rule; // 格式异常，返回原规则
+            return toLower(rule); // 格式异常，返回原规则
 
         // key = TYPE + 从 exprStart 到 exprEnd（含括号）的内容
-        return rule.substr(0, exprEnd + 1);
+        return toLower(rule.substr(0, exprEnd + 1));
     }
 
     // 按逗号分割
@@ -58,11 +59,11 @@ static std::string extractRuleKey(const std::string &rule)
 
     // 特判无 pattern 规则：MATCH 或 FINAL
     if(type == "MATCH" || type == "FINAL")
-        return type;
+        return toLower(type);
 
     // 至少需要两部分：TYPE,pattern
     if(parts.size() < 2)
-        return rule;
+        return toLower(rule);
 
     std::string pattern(parts[1]);
 
@@ -70,7 +71,7 @@ static std::string extractRuleKey(const std::string &rule)
     // 格式：TYPE,url/name,group[,配置参数...]
     // key = TYPE,url/name
     if(type == "RULE-SET" || type == "SUB-RULE")
-        return type + "," + pattern;
+        return toLower(type + "," + pattern);
 
     // 普通规则
     // 格式：TYPE,pattern[,group][,flag]
@@ -93,7 +94,7 @@ static std::string extractRuleKey(const std::string &rule)
         }
     }
 
-    return key;
+    return toLower(key);
 }
 
 std::string convertRuleset(const std::string &content, int type)
