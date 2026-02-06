@@ -1024,8 +1024,10 @@ void explodeTrojan(std::string trojan, Proxy &node) {
     if (port == "0")
         return;
 
-    host = getUrlArg(addition, "sni");
     sni = getUrlArg(addition, "sni");
+    host = getUrlArg(addition, "host");
+    if (host.empty())
+        host = sni;
     if (host.empty())
         host = getUrlArg(addition, "peer");
     tfo = getUrlArg(addition, "tfo");
@@ -1774,7 +1776,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         alpns.push_back(alpn2);
                     }
                 }
-                singleproxy["client-fingerprint"] >>= fingerprint;
+                singleproxy["fingerprint"] >>= fingerprint;
                 anyTlSConstruct(node, ANYTLS_DEFAULT_GROUP, ps, port, password, server, alpns, fingerprint, sni,
                                 udp,
                                 tribool(), scv, tribool(), "", 30, 30, 0);
@@ -3364,7 +3366,7 @@ void explodeTuic(const std::string &tuic, Proxy &node) {
         }
     }
 
-    pos = link.find(":");
+    pos = link.rfind(":");
     if (pos != std::string::npos) {
         add = link.substr(0, pos);
         link = link.substr(pos + 1);
@@ -3377,6 +3379,8 @@ void explodeTuic(const std::string &tuic, Proxy &node) {
         }
     }
 
+    if (add.length() > 2 && add.front() == '[' && add.back() == ']')
+        add = add.substr(1, add.length() - 2);
 
     scv = getUrlArg(addition, "insecure");
     alpn = getUrlArg(addition, "alpn");
@@ -3417,11 +3421,14 @@ void explodeAnyTLS(std::string anytls, Proxy &node) {
         anytls = anytls.substr(pos + 1);
     }
 
-    pos = anytls.find(":");
+    pos = anytls.rfind(":");
     if (pos != anytls.npos) {
         add = anytls.substr(0, pos);
         port = anytls.substr(pos + 1);
     }
+
+    if (add.length() > 2 && add.front() == '[' && add.back() == ']')
+        add = add.substr(1, add.length() - 2);
 
     if (remarks.empty())
         remarks = add + ":" + port;
@@ -3438,7 +3445,11 @@ void explodeAnyTLS(std::string anytls, Proxy &node) {
     fp = getUrlArg(addition, "fp");
     if (fp.empty())
         fp = getUrlArg(addition, "fingerprint");
+    if (fp.empty())
+        fp = urlDecode(getUrlArg(addition, "hpkp"));
     sni = getUrlArg(addition, "sni");
+    if (sni.empty())
+        sni = getUrlArg(addition, "peer");
     udp = getUrlArg(addition, "udp");
     tfo = getUrlArg(addition, "tfo");
     scv = getUrlArg(addition, "insecure");

@@ -2377,6 +2377,10 @@ proxyToLoon(std::vector<Proxy> &nodes, const std::string &base_conf,
 
                 proxy = "vmess," + hostname + "," + port + "," + method + ",\"" + id + "\",over-tls=" +
                         (tlssecure ? "true" : "false");
+
+                if (!sni.empty())
+                    host = sni;
+
                 if (tlssecure)
                     proxy += ",tls-name=" + host;
                 switch (hash_(transproto)) {
@@ -2440,6 +2444,16 @@ proxyToLoon(std::vector<Proxy> &nodes, const std::string &base_conf,
                 proxy = "trojan," + hostname + "," + port + ",\"" + password + "\"";
                 if (!host.empty())
                     proxy += ",tls-name=" + host;
+                switch (hash_(transproto)) {
+                    case "tcp"_hash:
+                        proxy += ",transport=tcp";
+                        break;
+                    case "ws"_hash:
+                        proxy += ",transport=ws,path=" + path + ",host=" + host;
+                        break;
+                    default:
+                        continue;
+                }
                 if (!scv.is_undef())
                     proxy += ",skip-cert-verify=" + std::string(scv.get() ? "true" : "false");
                 break;
@@ -2731,13 +2745,14 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json,
                 proxy.AddMember("method", rapidjson::StringRef(x.EncryptMethod.c_str()), allocator);
                 proxy.AddMember("password", rapidjson::StringRef(x.Password.c_str()), allocator);
                 if (!x.Plugin.empty() && !x.PluginOption.empty()) {
-                    if (x.Plugin == "simple-obfs")
+                    std::string plugin = x.Plugin;
+                    if (plugin == "simple-obfs" || plugin == "obfs")
                         x.Plugin = "obfs-local";
                     if (x.Plugin != "obfs-local" && x.Plugin != "v2ray-plugin") {
                         continue;
                     }
-                    proxy.AddMember("plugin", rapidjson::StringRef(x.Plugin.c_str()), allocator);
-                    proxy.AddMember("plugin_opts", rapidjson::StringRef(x.PluginOption.c_str()), allocator);
+                    proxy.AddMember("plugin", rapidjson::Value(x.Plugin.c_str(), allocator).Move(), allocator);
+                    proxy.AddMember("plugin_opts", rapidjson::Value(x.PluginOption.c_str(), allocator).Move(), allocator);
                 }
                 break;
             }
