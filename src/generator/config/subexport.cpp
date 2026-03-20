@@ -825,6 +825,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
         // sees in https://dreamacro.github.io/clash/configuration/outbound.html#snell
         if (udp && x.Type != ProxyType::Snell && x.Type != ProxyType::TUIC)
             singleproxy["udp"] = true;
+        if (!clashR && !x.UnderlyingProxy.empty())
+            singleproxy["dialer-proxy"] = x.UnderlyingProxy;
         if (proxy_block)
             singleproxy.SetStyle(YAML::EmitterStyle::Block);
         else
@@ -2675,6 +2677,9 @@ static void addSingBoxCommonMembers(rapidjson::Value &proxy, const Proxy &x,
     proxy.AddMember("tag", rapidjson::StringRef(x.Remark.c_str()), allocator);
     proxy.AddMember("server", rapidjson::StringRef(x.Hostname.c_str()), allocator);
     proxy.AddMember("server_port", x.Port, allocator);
+    if (!x.UnderlyingProxy.empty()) {
+        proxy.AddMember("detour", rapidjson::Value(x.UnderlyingProxy.c_str(), allocator), allocator);
+    }
 }
 
 static void addHeaders(rapidjson::Value &transport, const Proxy &x,

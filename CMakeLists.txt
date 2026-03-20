@@ -25,6 +25,34 @@ OPTION(USING_MALLOC_TRIM "Call malloc_trim after processing request to lower mem
 #now using internal MD5 calculation
 #OPTION(USING_MBEDTLS "Use mbedTLS instead of OpenSSL for MD5 calculation." OFF)
 OPTION(BUILD_STATIC_LIBRARY "Build a static library containing only the essential part." OFF)
+OPTION(BUILD_TESTS "Build regression tests." OFF)
+
+SET(CORE_LIBRARY_SOURCES
+    src/generator/config/ruleconvert.cpp
+    src/generator/config/subexport.cpp
+    src/generator/template/templates.cpp
+    src/parser/subparser.cpp
+    src/utils/base64/base64.cpp
+    src/utils/codepage.cpp
+    src/utils/logger.cpp
+    src/utils/md5/md5.cpp
+    src/utils/network.cpp
+    src/utils/regexp.cpp
+    src/utils/string.cpp
+    src/utils/urlencode.cpp)
+
+SET(TEST_LIBRARY_SOURCES
+    src/generator/config/ruleconvert.cpp
+    src/generator/config/subexport.cpp
+    src/parser/subparser.cpp
+    src/utils/base64/base64.cpp
+    src/utils/codepage.cpp
+    src/utils/logger.cpp
+    src/utils/md5/md5.cpp
+    src/utils/network.cpp
+    src/utils/regexp.cpp
+    src/utils/string.cpp
+    src/utils/urlencode.cpp)
 
 INCLUDE(CheckCXXSourceCompiles)
 CHECK_CXX_SOURCE_COMPILES(
@@ -37,9 +65,6 @@ IF(NOT BUILD_STATIC_LIBRARY)
 
 ADD_EXECUTABLE(${BUILD_TARGET_NAME} 
     src/generator/config/nodemanip.cpp
-    src/generator/config/ruleconvert.cpp
-    src/generator/config/subexport.cpp
-    src/generator/template/templates.cpp
     src/handler/interfaces.cpp
     src/handler/multithread.cpp
     src/handler/upload.cpp
@@ -47,21 +72,13 @@ ADD_EXECUTABLE(${BUILD_TARGET_NAME}
     src/handler/settings.cpp
     src/main.cpp
     src/parser/infoparser.cpp
-    src/parser/subparser.cpp
     src/script/cron.cpp
     src/script/script_quickjs.cpp
 #    src/server/webserver_libevent.cpp
     src/server/webserver_httplib.cpp
-    src/utils/base64/base64.cpp
-    src/utils/codepage.cpp
     src/utils/file.cpp
-    src/utils/logger.cpp
-    src/utils/md5/md5.cpp
-    src/utils/network.cpp
-    src/utils/regexp.cpp
-    src/utils/string.cpp
     src/utils/system.cpp
-    src/utils/urlencode.cpp)
+    ${CORE_LIBRARY_SOURCES})
 TARGET_INCLUDE_DIRECTORIES(${BUILD_TARGET_NAME} PRIVATE src)
 TARGET_LINK_DIRECTORIES(${BUILD_TARGET_NAME} PRIVATE ${CMAKE_SOURCE_DIR})
 
@@ -121,19 +138,8 @@ ENDIF()
 ELSE() #BUILD_STATIC_LIBRARY
 
 ADD_LIBRARY(${BUILD_TARGET_NAME} STATIC
-    src/generator/config/ruleconvert.cpp
-    src/generator/config/subexport.cpp
-    src/generator/template/templates.cpp
     src/lib/wrapper.cpp
-    src/parser/subparser.cpp
-    src/utils/base64/base64.cpp
-    src/utils/codepage.cpp
-    src/utils/logger.cpp
-    src/utils/md5/md5.cpp
-    src/utils/network.cpp
-    src/utils/regexp.cpp
-    src/utils/string.cpp
-    src/utils/urlencode.cpp)
+    ${CORE_LIBRARY_SOURCES})
 TARGET_COMPILE_DEFINITIONS(${BUILD_TARGET_NAME} PRIVATE -DNO_JS_RUNTIME -DNO_WEBGET)
 
 TARGET_INCLUDE_DIRECTORIES(${BUILD_TARGET_NAME} PUBLIC src)
@@ -167,4 +173,30 @@ ENDIF()
 
 IF(USING_MALLOC_TRIM)
     TARGET_COMPILE_DEFINITIONS(${BUILD_TARGET_NAME} PRIVATE -DMALLOC_TRIM)
+ENDIF()
+
+IF(BUILD_TESTS)
+    ENABLE_TESTING()
+    ADD_EXECUTABLE(pr4_regression_test
+        tests/pr4_regression_test.cpp
+        src/lib/wrapper.cpp
+        ${TEST_LIBRARY_SOURCES})
+    TARGET_INCLUDE_DIRECTORIES(pr4_regression_test PRIVATE src)
+    TARGET_COMPILE_DEFINITIONS(pr4_regression_test PRIVATE
+        -DNO_JS_RUNTIME
+        -DNO_WEBGET
+        -DYAML_CPP_STATIC_DEFINE
+        -DPCRE2_STATIC)
+    TARGET_LINK_DIRECTORIES(pr4_regression_test PRIVATE ${YAML_CPP_LIBRARY_DIRS})
+    TARGET_INCLUDE_DIRECTORIES(pr4_regression_test PRIVATE ${YAML_CPP_INCLUDE_DIRS})
+    TARGET_INCLUDE_DIRECTORIES(pr4_regression_test PRIVATE ${RAPIDJSON_INCLUDE_DIRS})
+    TARGET_INCLUDE_DIRECTORIES(pr4_regression_test PRIVATE ${PCRE2_INCLUDE_DIRS})
+    TARGET_LINK_LIBRARIES(pr4_regression_test PRIVATE ${YAML_CPP_LIBRARY} ${PCRE2_LIBRARY})
+    IF(WIN32)
+        TARGET_LINK_LIBRARIES(pr4_regression_test PRIVATE ws2_32)
+    ENDIF()
+    IF(HAVE_TO_STRING)
+        TARGET_COMPILE_DEFINITIONS(pr4_regression_test PRIVATE -DHAVE_TO_STRING)
+    ENDIF()
+    ADD_TEST(NAME pr4_regression_test COMMAND pr4_regression_test)
 ENDIF()
