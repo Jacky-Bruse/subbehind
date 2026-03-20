@@ -92,6 +92,9 @@ dns:
       - https://doh.pub/dns-query
     "geosite:category-ads-all": # 广告域名
       - "rcode://name_error"
+    "geosite:category-ai-!cn":
+      - https://cloudflare-dns.com/dns-query
+      - https://dns.google/dns-query
 
   # Fallback 模块优化: 
   # 因为有了上面的 nameserver-policy，fallback 实际上很少被触发。
