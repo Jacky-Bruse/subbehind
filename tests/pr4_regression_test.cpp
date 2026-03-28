@@ -132,6 +132,126 @@ void test_clash_round_trip_preserves_dialer_proxy() {
             "expected dialer-proxy to be emitted for Mihomo/Clash.Meta");
 }
 
+void test_clash_vless_xhttp_export_preserves_transport() {
+    std::vector<Proxy> nodes;
+    explodeSub(
+        "vless://12345678-1234-1234-1234-123456789012@xhttp.example.com:443"
+        "?security=reality&type=xhttp&host=cdn.example.com&path=%2Fxhttp&mode=auto"
+        "&pbk=pubkey-123&sid=abcd1234&fp=chrome&sni=reality.example.com"
+        "#xhttp-node",
+        nodes);
+
+    require(nodes.size() == 1, "expected one node");
+
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("name: xhttp-node") != std::string::npos, "expected Clash export to keep the xhttp node");
+    require(exported.find("network: xhttp") != std::string::npos, "expected Clash export to emit xhttp network");
+    require(exported.find("xhttp-opts:") != std::string::npos, "expected Clash export to emit xhttp-opts");
+    require(exported.find("path: /xhttp") != std::string::npos, "expected Clash export to emit xhttp path");
+    require(exported.find("host: cdn.example.com") != std::string::npos, "expected Clash export to emit xhttp host");
+    require(exported.find("mode: auto") != std::string::npos, "expected Clash export to emit xhttp mode");
+}
+
+void test_clash_vless_xhttp_parse_preserves_transport() {
+    const std::string content = R"(proxies:
+  - name: xhttp-node
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    servername: reality.example.com
+    client-fingerprint: chrome
+    network: xhttp
+    reality-opts:
+      public-key: pubkey-123
+      short-id: abcd1234
+    xhttp-opts:
+      host: cdn.example.com
+      path: /xhttp
+      mode: auto
+)";
+
+    const Proxy node = parse_clash(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(node.TransferProtocol == "xhttp", "expected Clash parser to keep xhttp network");
+    require(node.Host == "cdn.example.com", "expected Clash parser to keep xhttp host");
+    require(node.Path == "/xhttp", "expected Clash parser to keep xhttp path");
+    require(node.XhttpMode == "auto", "expected Clash parser to keep xhttp mode");
+    require(node.PublicKey == "pubkey-123", "expected Clash parser to keep reality public key");
+    require(node.ShortId == "abcd1234", "expected Clash parser to keep reality short id");
+    require(node.ServerName == "reality.example.com", "expected Clash parser to keep servername");
+    require(node.ClientFingerprint == "chrome", "expected Clash parser to keep client fingerprint");
+}
+
+void test_clash_vless_ws_reality_preserves_transport_host() {
+    const std::string content = R"(proxies:
+  - name: ws-reality
+    type: vless
+    server: ws.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    servername: reality.example.com
+    client-fingerprint: chrome
+    network: ws
+    reality-opts:
+      public-key: pubkey-ws
+      short-id: ws1234
+    ws-opts:
+      path: /ws-path
+      headers:
+        Host: ws-transport.example.com
+)";
+
+    const Proxy node = parse_clash(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(node.TransferProtocol == "ws", "expected ws network");
+    require(node.Host == "ws-transport.example.com",
+            "ws+reality: transport Host must come from ws-opts, not sni/servername");
+    require(node.ServerName == "reality.example.com",
+            "ws+reality: ServerName must come from servername field");
+    require(node.Path == "/ws-path", "ws+reality: path must be preserved");
+    require(node.PublicKey == "pubkey-ws", "ws+reality: reality public key must be preserved");
+}
+
+void test_clash_vless_h2_reality_preserves_transport_host() {
+    const std::string content = R"(proxies:
+  - name: h2-reality
+    type: vless
+    server: h2.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    servername: reality.example.com
+    client-fingerprint: chrome
+    network: h2
+    reality-opts:
+      public-key: pubkey-h2
+      short-id: h21234
+    h2-opts:
+      path: /h2-path
+      host:
+        - h2-transport.example.com
+)";
+
+    const Proxy node = parse_clash(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(node.TransferProtocol == "h2", "expected h2 network");
+    require(node.Host == "h2-transport.example.com",
+            "h2+reality: transport Host must come from h2-opts, not sni/servername");
+    require(node.ServerName == "reality.example.com",
+            "h2+reality: ServerName must come from servername field");
+    require(node.Path == "/h2-path", "h2+reality: path must be preserved");
+    require(node.PublicKey == "pubkey-h2", "h2+reality: reality public key must be preserved");
+}
+
 void test_singbox_round_trip_preserves_detour_and_vless_encryption() {
     const std::string content = R"({
   "inbounds": [],
@@ -380,6 +500,10 @@ int main() {
         test_vmess_conf_reads_mixed_case_wssettings();
         test_clash_ss_mux_pluginopts_do_not_duplicate();
         test_clash_round_trip_preserves_dialer_proxy();
+        test_clash_vless_xhttp_export_preserves_transport();
+        test_clash_vless_xhttp_parse_preserves_transport();
+        test_clash_vless_ws_reality_preserves_transport_host();
+        test_clash_vless_h2_reality_preserves_transport_host();
         test_singbox_round_trip_preserves_detour_and_vless_encryption();
         test_vless_link_preserves_xhttp_transport();
         test_v2ray_vless_xhttp_conf_preserves_transport();

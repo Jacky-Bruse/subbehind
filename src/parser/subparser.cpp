@@ -1357,7 +1357,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
         std::string fp = "chrome", pbk, sid, packet_encoding, encryption; //vless
         std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
         std::string protocol, protoparam, obfs, obfsparam; //ssr
-        std::string flow, mode; //trojan
+        std::string flow, mode, xhttp_mode; //trojan/xhttp
         std::string user; //socks
         std::string ip, ipv6, private_key, public_key, mtu; //wireguard
         std::string auth, up, down, obfsParam, insecure, alpn; //hysteria
@@ -1635,15 +1635,18 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         singleproxy["grpc-opts"]["grpc-service-name"] >>= path;
                         edge.clear();
                         break;
+                    case "xhttp"_hash:
+                        singleproxy["xhttp-opts"]["host"] >>= host;
+                        singleproxy["xhttp-opts"]["path"] >>= path;
+                        singleproxy["xhttp-opts"]["mode"] >>= xhttp_mode;
+                        edge.clear();
+                        break;
                     default:
                         continue;
                 }
 
                 tls = safe_as<std::string>(singleproxy["tls"]) == "true" ? "tls" : "";
                 if (singleproxy["reality-opts"].IsDefined()) {
-                    host = singleproxy["sni"].IsDefined()
-                               ? safe_as<std::string>(singleproxy["sni"])
-                               : safe_as<std::string>(singleproxy["servername"]);
                     singleproxy["reality-opts"]["public-key"] >>= pbk;
                     singleproxy["reality-opts"]["short-id"] >>= sid;
                     tls = "reality";
@@ -1696,6 +1699,8 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                                    packet_addr_flag, global_padding_flag, authenticated_length_flag,
                                    ech_enable_flag, ech_config, ws_max_early_data, ws_early_data_header_name,
                                    v2ray_http_upgrade_fast_open_flag);
+                    if (net == "xhttp")
+                        assignXhttpFields(node, xhttp_mode, "", "");
                 }
                 break;
             case "hysteria"_hash:

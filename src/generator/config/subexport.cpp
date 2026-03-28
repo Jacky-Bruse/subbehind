@@ -813,6 +813,14 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                         singleproxy["grpc-opts"]["grpc-mode"] = x.GRPCMode;
                         singleproxy["grpc-opts"]["grpc-service-name"] = x.GRPCServiceName;
                         break;
+                    case "xhttp"_hash:
+                        singleproxy["network"] = x.TransferProtocol;
+                        singleproxy["xhttp-opts"]["path"] = x.Path.empty() ? "/" : x.Path;
+                        if (!x.Host.empty())
+                            singleproxy["xhttp-opts"]["host"] = x.Host;
+                        if (!x.XhttpMode.empty())
+                            singleproxy["xhttp-opts"]["mode"] = x.XhttpMode;
+                        break;
                     default:
                         continue;
                 }
