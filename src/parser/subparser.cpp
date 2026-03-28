@@ -49,6 +49,34 @@ std::string removeBrackets(const std::string& input) {
 
     return result;
 }
+
+static std::string getCompactJsonString(const rapidjson::Value &value) {
+    if (value.IsNull())
+        return "";
+    if (value.IsObject() || value.IsArray()) {
+        rapidjson::StringBuffer buffer;
+        rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+        value.Accept(writer);
+        return buffer.GetString();
+    }
+    std::string output;
+    value >> output;
+    return output;
+}
+
+static std::string getJsonMemberPreserve(const rapidjson::Value &value, const std::string &member) {
+    if (!value.IsObject() || !value.HasMember(member.data()))
+        return "";
+    return getCompactJsonString(value[member.data()]);
+}
+
+static void assignXhttpFields(Proxy &node, const std::string &mode, const std::string &extra,
+                              const std::string &download_settings) {
+    node.XhttpMode = mode;
+    node.XhttpExtra = extra;
+    node.XhttpDownloadSettings = download_settings;
+}
+
 void commonConstruct(Proxy &node, ProxyType type, const std::string &group, const std::string &remarks,
                      const std::string &server, const std::string &port, const tribool &udp, const tribool &tfo,
                      const tribool &scv, const tribool &tls13, const std::string &underlying_proxy) {
@@ -303,7 +331,7 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
     node.UserId = id.empty() ? "00000000-0000-0000-0000-000000000000" : id;
     node.AlterId = to_int(aid);
     node.EncryptMethod = cipher;
-    node.TransferProtocol = net.empty() ? "tcp" : type == "http" ? "http" : net;
+    node.TransferProtocol = net == "xhttp" ? "xhttp" : net.empty() ? "tcp" : type == "http" ? "http" : net;
     node.Edge = edge;
     node.Flow = flow;
     // 规范化 encryption：trim 空白，None/NONE 统一为 none
@@ -340,6 +368,10 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
         case "quic"_hash:
             node.Host = host;
             node.QUICSecret = path.empty() ? "/" : trim(path);
+            break;
+        case "xhttp"_hash:
+            node.Host = (host.empty() && !isIPv4(add) && !isIPv6(add)) ? add.data() : trim(host);
+            node.Path = path.empty() ? "/" : urlDecode(trim(path));
             break;
         default:
             node.Host = (host.empty() && !isIPv4(add) && !isIPv6(add)) ? add.data() : trim(host);
@@ -494,15 +526,19 @@ void explodeVmessConf(std::string content, std::vector<Proxy> &nodes) {
     Document json;
     rapidjson::Value nodejson, settings;
     std::string group, ps, add, port, type, id, aid, net, path, host, edge, tls, cipher, subid, sni;
+    std::string pbk, sid, fp;
+    std::string protocol, flow, encryption, xhttp_mode, xhttp_extra, xhttp_download_settings;
+    std::vector<std::string> alpnList;
     tribool udp, tfo, scv;
     int configType;
     uint32_t index = nodes.size();
     std::map<std::string, std::string> subdata;
     std::map<std::string, std::string>::iterator iter;
-    std::string streamset = "streamSettings", tcpset = "tcpSettings", wsset = "wsSettings";
+    std::string streamset = "streamSettings", tcpset = "tcpSettings", wsset = "wsSettings", xhttpset = "xhttpSettings";
     regGetMatch(content, "((?i)streamsettings)", 2, 0, &streamset);
     regGetMatch(content, "((?i)tcpsettings)", 2, 0, &tcpset);
     regGetMatch(content, "((?i)wssettings)", 2, 0, &wsset);
+    regGetMatch(content, "((?i)xhttpsettings)", 2, 0, &xhttpset);
 
     json.Parse(content.data());
     if (json.HasParseError() || !json.IsObject())
@@ -515,6 +551,7 @@ void explodeVmessConf(std::string content, std::vector<Proxy> &nodes) {
                 json["outbounds"][0]["settings"]["vnext"].Size() > 0) {
                 Proxy node;
                 nodejson = json["outbounds"][0];
+                protocol = GetMember(nodejson, "protocol");
                 add = GetMember(nodejson["settings"]["vnext"][0], "address");
                 port = GetMember(nodejson["settings"]["vnext"][0], "port");
                 if (port == "0")
@@ -523,25 +560,45 @@ void explodeVmessConf(std::string content, std::vector<Proxy> &nodes) {
                     id = GetMember(nodejson["settings"]["vnext"][0]["users"][0], "id");
                     aid = GetMember(nodejson["settings"]["vnext"][0]["users"][0], "alterId");
                     cipher = GetMember(nodejson["settings"]["vnext"][0]["users"][0], "security");
+                    encryption = GetMember(nodejson["settings"]["vnext"][0]["users"][0], "encryption");
+                    flow = GetMember(nodejson["settings"]["vnext"][0]["users"][0], "flow");
                 }
                 if (nodejson.HasMember(streamset.data())) {
-                    net = GetMember(nodejson[streamset.data()], "network");
-                    tls = GetMember(nodejson[streamset.data()], "security");
+                    const rapidjson::Value &stream = nodejson[streamset.data()];
+                    net = GetMember(stream, "network");
+                    tls = GetMember(stream, "security");
+                    if (tls == "reality" && stream.HasMember("realitySettings") && stream["realitySettings"].IsObject()) {
+                        const rapidjson::Value &reality = stream["realitySettings"];
+                        pbk = GetMember(reality, "publicKey");
+                        sid = GetMember(reality, "shortId");
+                        fp = GetMember(reality, "fingerprint");
+                        sni = GetMember(reality, "serverName");
+                    } else if (stream.HasMember("tlsSettings") && stream["tlsSettings"].IsObject()) {
+                        const rapidjson::Value &tlsSettings = stream["tlsSettings"];
+                        sni = GetMember(tlsSettings, "serverName");
+                        scv = GetMember(tlsSettings, "allowInsecure");
+                        if (tlsSettings.HasMember("alpn") && tlsSettings["alpn"].IsArray()) {
+                            for (auto &item: tlsSettings["alpn"].GetArray()) {
+                                if (item.IsString())
+                                    alpnList.emplace_back(item.GetString());
+                            }
+                        }
+                    }
                     if (net == "ws") {
-                        if (nodejson[streamset.data()].HasMember(wsset.data()))
-                            settings = nodejson[streamset.data()][wsset.data()];
+                        if (stream.HasMember(wsset.data()))
+                            settings = stream[wsset.data()];
                         else
-                            settings.RemoveAllMembers();
+                            settings.SetObject();
                         path = GetMember(settings, "path");
                         if (settings.HasMember("headers")) {
                             host = GetMember(settings["headers"], "Host");
                             edge = GetMember(settings["headers"], "Edge");
                         }
                     }
-                    if (nodejson[streamset.data()].HasMember(tcpset.data()))
-                        settings = nodejson[streamset.data()][tcpset.data()];
+                    if (stream.HasMember(tcpset.data()))
+                        settings = stream[tcpset.data()];
                     else
-                        settings.RemoveAllMembers();
+                        settings.SetObject();
                     if (settings.IsObject() && settings.HasMember("header")) {
                         type = GetMember(settings["header"], "type");
                         if (type == "http") {
@@ -555,10 +612,28 @@ void explodeVmessConf(std::string content, std::vector<Proxy> &nodes) {
                                 }
                             }
                         }
+                    } else if (net == "xhttp") {
+                        if (stream.HasMember(xhttpset.data()))
+                            settings = stream[xhttpset.data()];
+                        else
+                            settings.SetObject();
+                        host = GetMember(settings, "host");
+                        path = GetMember(settings, "path");
+                        xhttp_mode = GetMember(settings, "mode");
+                        xhttp_extra = getJsonMemberPreserve(settings, "extra");
+                        xhttp_download_settings = getJsonMemberPreserve(settings, "downloadSettings");
                     }
                 }
-                vmessConstruct(node, V2RAY_DEFAULT_GROUP, add + ":" + port, add, port, type, id, aid, net, cipher, path,
-                               host, edge, tls, "", std::vector<std::string>{}, udp, tfo, scv);
+                if (protocol == "vless") {
+                    vlessConstruct(node, XRAY_DEFAULT_GROUP, add + ":" + port, add, port, "", id, aid, net, "auto",
+                                   flow, "", path, host, edge, tls, pbk, sid, fp, sni, alpnList, "",
+                                   udp, tfo, scv, tribool(), "", tribool(), encryption);
+                    if (net == "xhttp")
+                        assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings);
+                } else {
+                    vmessConstruct(node, V2RAY_DEFAULT_GROUP, add + ":" + port, add, port, type, id, aid, net, cipher,
+                                   path, host, edge, tls, "", std::vector<std::string>{}, udp, tfo, scv);
+                }
                 nodes.emplace_back(std::move(node));
             }
             return;
@@ -1997,6 +2072,7 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
 
 void explodeStdVless(std::string vless, Proxy &node) {
     std::string add, port, type, id, aid, net, flow, pbk, sid, fp, mode, path, host, tls, remarks, sni;
+    std::string xhttp_mode, xhttp_extra, xhttp_download_settings;
     std::string addition;
     vless = vless.substr(8);
     string_size pos;
@@ -2035,10 +2111,17 @@ void explodeStdVless(std::string vless, Proxy &node) {
             path = getUrlArg(addition, "path");
             break;
         case "xhttp"_hash: // 新增对 type=xhttp 的支持
-            net = "h2"; // 视为 h2/http2 传输
-            type = getUrlArg(addition, "headerType");
-            host = getUrlArg(addition, strFind(addition, "sni") ? "sni" : "host");
+            host = getUrlArg(addition, "host");
+            if (host.empty())
+                host = getUrlArg(addition, "sni");
             path = getUrlArg(addition, "path");
+            xhttp_mode = getUrlArg(addition, "mode");
+            xhttp_extra = getUrlArg(addition, "extra");
+            xhttp_download_settings = getUrlArg(addition, "downloadSettings");
+            if (!xhttp_extra.empty())
+                xhttp_extra = urlDecode(xhttp_extra);
+            if (!xhttp_download_settings.empty())
+                xhttp_download_settings = urlDecode(xhttp_download_settings);
             break;
         case "grpc"_hash:
             host = getUrlArg(addition, "sni");
@@ -2060,6 +2143,8 @@ void explodeStdVless(std::string vless, Proxy &node) {
     vlessConstruct(node, XRAY_DEFAULT_GROUP, remarks, add, port, type, id, aid, net, "auto", flow, mode, path, host, "",
                    tls, pbk, sid, fp, sni, alpnList, packet_encoding, tribool(), tribool(), tribool(),
                    tribool(), "", tribool(), encryption);
+    if (net == "xhttp")
+        assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings);
     return;
 }
 
@@ -3111,7 +3196,7 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
             std::string fp = "chrome", pbk, sid, packet_encoding, encryption; //vless
             std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
             std::string protocol, protoparam, obfs, obfsparam; //ssr
-            std::string flow, mode; //trojan
+            std::string flow, mode, xhttp_mode, xhttp_extra, xhttp_download_settings; //trojan/xhttp
             std::string user; //socks
             std::string ip, ipv6, private_key, public_key, mtu; //wireguard
             std::string auth, up, down, obfsParam, insecure, alpn; //hysteria
@@ -3246,6 +3331,17 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                                     edge.clear();
                                     break;
                                 }
+                                case "xhttp"_hash: {
+                                    host = GetMember(transport, "host");
+                                    path = GetMember(transport, "path");
+                                    edge.clear();
+                                    xhttp_mode = GetMember(transport, "mode");
+                                    xhttp_extra = getJsonMemberPreserve(transport, "extra");
+                                    xhttp_download_settings = getJsonMemberPreserve(transport, "downloadSettings");
+                                    if (xhttp_download_settings.empty())
+                                        xhttp_download_settings = getJsonMemberPreserve(transport, "download_settings");
+                                    break;
+                                }
                                 case "grpc"_hash: {
                                     host = server;
                                     path = GetMember(transport, "service_name");
@@ -3257,6 +3353,8 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                         vlessConstruct(node, group, ps, server, port, type, id, aid, net, "auto", flow, mode, path,
                                        host, "", tls, pbk, sid, fp, sni, alpnList, packet_encoding, udp, tribool(),
                                        tribool(), tribool(), underlying_proxy, tribool(), encryption);
+                        if (net == "xhttp")
+                            assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings);
                         break;
                     case "http"_hash:
                         password = GetMember(singboxNode, "password");

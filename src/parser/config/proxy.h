@@ -108,6 +108,11 @@ struct Proxy {
     String GRPCServiceName;
     String GRPCMode;
 
+    // ===== XHTTP =====
+    String XhttpMode;
+    String XhttpExtra;
+    String XhttpDownloadSettings;
+
     // ===== Basic Flags =====
     tribool UDP;
     tribool XUDP;

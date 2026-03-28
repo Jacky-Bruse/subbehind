@@ -1477,6 +1477,17 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                             addVlessParam("serviceName", path);
                             addVlessParam("mode", mode);
                             break;
+                        case "xhttp"_hash:
+                            if (!host.empty())
+                                addVlessParam("host", host);
+                            addVlessParam("path", urlEncode(path.empty() ? "/" : path));
+                            if (!x.XhttpMode.empty())
+                                addVlessParam("mode", x.XhttpMode);
+                            if (!x.XhttpExtra.empty())
+                                addVlessParam("extra", urlEncode(x.XhttpExtra));
+                            if (!x.XhttpDownloadSettings.empty())
+                                addVlessParam("downloadSettings", urlEncode(x.XhttpDownloadSettings));
+                            break;
                         case "quic"_hash:
                             addVlessParam("headerType", fake_type);
                             addVlessParam("quicSecurity", host.empty() ? sni : host);
@@ -1881,6 +1892,10 @@ void proxyToQuanX(std::vector<Proxy> &nodes, INIReader &ini, std::vector<Ruleset
                     proxyStr += ", obfs=over-tls, obfs-host=" + host;
                 break;
             case ProxyType::VLESS:
+                if (transproto == "xhttp") {
+                    writeLog(0, "Skipping xhttp node for unsupported target: Quantumult X", LOG_LEVEL_WARNING);
+                    continue;
+                }
                 if (method == "auto")
                     method = "none";
                 else
