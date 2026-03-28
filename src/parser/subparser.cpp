@@ -524,7 +524,7 @@ void explodeVmess(std::string vmess, Proxy &node) {
 
 void explodeVmessConf(std::string content, std::vector<Proxy> &nodes) {
     Document json;
-    rapidjson::Value nodejson, settings;
+    rapidjson::Value nodejson;
     std::string group, ps, add, port, type, id, aid, net, path, host, edge, tls, cipher, subid, sni;
     std::string pbk, sid, fp;
     std::string protocol, flow, encryption, xhttp_mode, xhttp_extra, xhttp_download_settings;
@@ -585,43 +585,34 @@ void explodeVmessConf(std::string content, std::vector<Proxy> &nodes) {
                         }
                     }
                     if (net == "ws") {
-                        if (stream.HasMember(wsset.data()))
-                            settings = stream[wsset.data()];
-                        else
-                            settings.SetObject();
-                        path = GetMember(settings, "path");
-                        if (settings.HasMember("headers")) {
-                            host = GetMember(settings["headers"], "Host");
-                            edge = GetMember(settings["headers"], "Edge");
+                        const rapidjson::Value *settings = stream.HasMember(wsset.data()) ? &stream[wsset.data()] : nullptr;
+                        path = settings ? GetMember(*settings, "path") : "";
+                        if (settings && settings->HasMember("headers")) {
+                            host = GetMember((*settings)["headers"], "Host");
+                            edge = GetMember((*settings)["headers"], "Edge");
                         }
                     }
-                    if (stream.HasMember(tcpset.data()))
-                        settings = stream[tcpset.data()];
-                    else
-                        settings.SetObject();
-                    if (settings.IsObject() && settings.HasMember("header")) {
-                        type = GetMember(settings["header"], "type");
+                    const rapidjson::Value *settings = stream.HasMember(tcpset.data()) ? &stream[tcpset.data()] : nullptr;
+                    if (settings && settings->IsObject() && settings->HasMember("header")) {
+                        type = GetMember((*settings)["header"], "type");
                         if (type == "http") {
-                            if (settings["header"].HasMember("request")) {
-                                if (settings["header"]["request"].HasMember("path") &&
-                                    settings["header"]["request"]["path"].Size())
-                                    settings["header"]["request"]["path"][0] >> path;
-                                if (settings["header"]["request"].HasMember("headers")) {
-                                    host = GetMember(settings["header"]["request"]["headers"], "Host");
-                                    edge = GetMember(settings["header"]["request"]["headers"], "Edge");
+                            if ((*settings)["header"].HasMember("request")) {
+                                if ((*settings)["header"]["request"].HasMember("path") &&
+                                    (*settings)["header"]["request"]["path"].Size())
+                                    (*settings)["header"]["request"]["path"][0] >> path;
+                                if ((*settings)["header"]["request"].HasMember("headers")) {
+                                    host = GetMember((*settings)["header"]["request"]["headers"], "Host");
+                                    edge = GetMember((*settings)["header"]["request"]["headers"], "Edge");
                                 }
                             }
                         }
                     } else if (net == "xhttp") {
-                        if (stream.HasMember(xhttpset.data()))
-                            settings = stream[xhttpset.data()];
-                        else
-                            settings.SetObject();
-                        host = GetMember(settings, "host");
-                        path = GetMember(settings, "path");
-                        xhttp_mode = GetMember(settings, "mode");
-                        xhttp_extra = getJsonMemberPreserve(settings, "extra");
-                        xhttp_download_settings = getJsonMemberPreserve(settings, "downloadSettings");
+                        settings = stream.HasMember(xhttpset.data()) ? &stream[xhttpset.data()] : nullptr;
+                        host = settings ? GetMember(*settings, "host") : "";
+                        path = settings ? GetMember(*settings, "path") : "";
+                        xhttp_mode = settings ? GetMember(*settings, "mode") : "";
+                        xhttp_extra = settings ? getJsonMemberPreserve(*settings, "extra") : "";
+                        xhttp_download_settings = settings ? getJsonMemberPreserve(*settings, "downloadSettings") : "";
                     }
                 }
                 if (protocol == "vless") {
