@@ -111,7 +111,11 @@ struct Proxy {
     // ===== XHTTP =====
     String XhttpMode;
     String XhttpExtra;
-    String XhttpDownloadSettings;
+    String XhttpDownloadSettings;  // Xray JSON format (for VLESS link round-trip)
+    String XhttpHeaders;           // JSON object string {"Key": "Val"} (xhttp-opts.headers)
+    tribool XhttpNoGrpcHeader;     // xhttp-opts.no-grpc-header
+    String XhttpPaddingBytes;      // xhttp-opts.x-padding-bytes
+    String XhttpDownload;          // Mihomo canonical JSON for download-settings export
 
     // ===== Basic Flags =====
     tribool UDP;

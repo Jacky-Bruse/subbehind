@@ -221,6 +221,59 @@ groupGenerate(const std::string &rule, std::vector<Proxy> &nodelist, string_arra
     }
 }
 
+// Export Mihomo canonical download JSON to xhttp-opts.download-settings YAML node
+static void addXhttpDownloadToYaml(YAML::Node &opts, const std::string &download_json) {
+    if (download_json.empty())
+        return;
+    rapidjson::Document d;
+    d.Parse(download_json.data());
+    if (d.HasParseError() || !d.IsObject())
+        return;
+
+    YAML::Node ds;
+    std::string server = GetMember(d, "server");
+    if (!server.empty())
+        ds["server"] = server;
+    if (d.HasMember("port") && d["port"].IsInt())
+        ds["port"] = d["port"].GetInt();
+    if (d.HasMember("tls") && d["tls"].IsBool())
+        ds["tls"] = d["tls"].GetBool();
+    std::string sn = GetMember(d, "servername");
+    if (!sn.empty())
+        ds["servername"] = sn;
+    if (d.HasMember("alpn") && d["alpn"].IsArray()) {
+        for (const auto &a : d["alpn"].GetArray())
+            ds["alpn"].push_back(std::string(a.GetString()));
+    }
+    std::string fp = GetMember(d, "client-fingerprint");
+    if (!fp.empty())
+        ds["client-fingerprint"] = fp;
+    std::string pbk = GetMember(d, "public-key");
+    if (!pbk.empty())
+        ds["public-key"] = pbk;
+    std::string sid = GetMember(d, "short-id");
+    if (!sid.empty())
+        ds["short-id"] = sid;
+    std::string path = GetMember(d, "path");
+    if (!path.empty())
+        ds["path"] = path;
+    std::string host = GetMember(d, "host");
+    if (!host.empty())
+        ds["host"] = host;
+    if (d.HasMember("headers") && d["headers"].IsObject() && !d["headers"].ObjectEmpty()) {
+        for (const auto &kv : d["headers"].GetObject())
+            ds["headers"][kv.name.GetString()] = std::string(kv.value.GetString());
+    }
+    if (d.HasMember("no-grpc-header") && d["no-grpc-header"].IsBool())
+        ds["no-grpc-header"] = d["no-grpc-header"].GetBool();
+    std::string padding = GetMember(d, "x-padding-bytes");
+    if (!padding.empty())
+        ds["x-padding-bytes"] = padding;
+
+    if (ds.IsDefined())
+        opts["download-settings"] = ds;
+}
+
 void
 proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupConfigs &extra_proxy_group, bool clashR,
              extra_settings &ext) {
@@ -820,6 +873,20 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                             singleproxy["xhttp-opts"]["host"] = x.Host;
                         if (!x.XhttpMode.empty())
                             singleproxy["xhttp-opts"]["mode"] = x.XhttpMode;
+                        if (!x.XhttpHeaders.empty()) {
+                            rapidjson::Document hd;
+                            hd.Parse(x.XhttpHeaders.data());
+                            if (!hd.HasParseError() && hd.IsObject()) {
+                                for (const auto &kv : hd.GetObject())
+                                    singleproxy["xhttp-opts"]["headers"][kv.name.GetString()] =
+                                        std::string(kv.value.GetString());
+                            }
+                        }
+                        if (!x.XhttpNoGrpcHeader.is_undef())
+                            singleproxy["xhttp-opts"]["no-grpc-header"] = x.XhttpNoGrpcHeader.get();
+                        if (!x.XhttpPaddingBytes.empty())
+                            singleproxy["xhttp-opts"]["x-padding-bytes"] = x.XhttpPaddingBytes;
+                        addXhttpDownloadToYaml(singleproxy["xhttp-opts"], x.XhttpDownload);
                         break;
                     default:
                         continue;

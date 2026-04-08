@@ -70,11 +70,180 @@ static std::string getJsonMemberPreserve(const rapidjson::Value &value, const st
     return getCompactJsonString(value[member.data()]);
 }
 
+// Convert Xray downloadSettings JSON to Mihomo canonical JSON (Mihomo field names)
+static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
+    if (xray_json.empty())
+        return "";
+    rapidjson::Document d;
+    d.Parse(xray_json.data());
+    if (d.HasParseError() || !d.IsObject())
+        return "";
+
+    rapidjson::Document out;
+    out.SetObject();
+    auto &alloc = out.GetAllocator();
+
+    std::string addr = GetMember(d, "address");
+    if (!addr.empty())
+        out.AddMember("server", rapidjson::Value(addr.c_str(), alloc), alloc);
+
+    if (d.HasMember("port") && d["port"].IsInt())
+        out.AddMember("port", d["port"].GetInt(), alloc);
+    else if (d.HasMember("port") && d["port"].IsString()) {
+        int p = to_int(GetMember(d, "port"), 0);
+        if (p > 0) out.AddMember("port", p, alloc);
+    }
+
+    std::string security = GetMember(d, "security");
+    if (security == "tls" || security == "reality")
+        out.AddMember("tls", true, alloc);
+
+    const char *tlsKey = (security == "reality") ? "realitySettings" : "tlsSettings";
+    if (d.HasMember(tlsKey) && d[tlsKey].IsObject()) {
+        const auto &ts = d[tlsKey];
+        std::string sn = GetMember(ts, "serverName");
+        if (!sn.empty())
+            out.AddMember("servername", rapidjson::Value(sn.c_str(), alloc), alloc);
+        std::string fp = GetMember(ts, "fingerprint");
+        if (!fp.empty())
+            out.AddMember("client-fingerprint", rapidjson::Value(fp.c_str(), alloc), alloc);
+        if (ts.HasMember("alpn") && ts["alpn"].IsArray()) {
+            rapidjson::Value alpnArr(rapidjson::kArrayType);
+            for (const auto &a : ts["alpn"].GetArray())
+                alpnArr.PushBack(rapidjson::Value(a.GetString(), alloc), alloc);
+            out.AddMember("alpn", alpnArr, alloc);
+        }
+        if (security == "reality") {
+            std::string pbk = GetMember(ts, "publicKey");
+            if (!pbk.empty())
+                out.AddMember("public-key", rapidjson::Value(pbk.c_str(), alloc), alloc);
+            std::string sid = GetMember(ts, "shortId");
+            if (!sid.empty())
+                out.AddMember("short-id", rapidjson::Value(sid.c_str(), alloc), alloc);
+        }
+    }
+
+    // xhttpSettings inside downloadSettings
+    const char *xhttpKey = "xhttpSettings";
+    if (d.HasMember(xhttpKey) && d[xhttpKey].IsObject()) {
+        const auto &xs = d[xhttpKey];
+        std::string path = GetMember(xs, "path");
+        if (!path.empty())
+            out.AddMember("path", rapidjson::Value(path.c_str(), alloc), alloc);
+        std::string host = GetMember(xs, "host");
+        if (!host.empty())
+            out.AddMember("host", rapidjson::Value(host.c_str(), alloc), alloc);
+        if (xs.HasMember("headers") && xs["headers"].IsObject() && !xs["headers"].ObjectEmpty())
+            out.AddMember("headers", rapidjson::Value(xs["headers"], alloc), alloc);
+        if (xs.HasMember("noGRPCHeader") && xs["noGRPCHeader"].IsBool())
+            out.AddMember("no-grpc-header", xs["noGRPCHeader"].GetBool(), alloc);
+        std::string padding = GetMember(xs, "xPaddingBytes");
+        if (!padding.empty())
+            out.AddMember("x-padding-bytes", rapidjson::Value(padding.c_str(), alloc), alloc);
+    }
+
+    if (out.ObjectEmpty())
+        return "";
+
+    rapidjson::StringBuffer buf;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
+    out.Accept(writer);
+    return buf.GetString();
+}
+
+// Convert Clash YAML download-settings node to Mihomo canonical JSON
+static std::string clashDownloadToMihomoJson(const Node &node) {
+    if (!node.IsDefined() || !node.IsMap())
+        return "";
+
+    rapidjson::Document out;
+    out.SetObject();
+    auto &alloc = out.GetAllocator();
+
+    std::string server, servername, fingerprint, path, host, paddingBytes;
+    node["server"] >>= server;
+    if (!server.empty())
+        out.AddMember("server", rapidjson::Value(server.c_str(), alloc), alloc);
+
+    if (node["port"].IsDefined()) {
+        int port = safe_as<int>(node["port"]);
+        if (port > 0) out.AddMember("port", port, alloc);
+    }
+
+    if (node["tls"].IsDefined()) {
+        bool tls = safe_as<std::string>(node["tls"]) == "true";
+        out.AddMember("tls", tls, alloc);
+    }
+
+    node["servername"] >>= servername;
+    if (!servername.empty())
+        out.AddMember("servername", rapidjson::Value(servername.c_str(), alloc), alloc);
+
+    if (node["alpn"].IsDefined() && node["alpn"].IsSequence()) {
+        rapidjson::Value alpnArr(rapidjson::kArrayType);
+        for (const auto &a : node["alpn"])
+            alpnArr.PushBack(rapidjson::Value(a.as<std::string>().c_str(), alloc), alloc);
+        out.AddMember("alpn", alpnArr, alloc);
+    }
+
+    node["client-fingerprint"] >>= fingerprint;
+    if (!fingerprint.empty())
+        out.AddMember("client-fingerprint", rapidjson::Value(fingerprint.c_str(), alloc), alloc);
+
+    std::string pbk, sid;
+    node["public-key"] >>= pbk;
+    if (!pbk.empty())
+        out.AddMember("public-key", rapidjson::Value(pbk.c_str(), alloc), alloc);
+    node["short-id"] >>= sid;
+    if (!sid.empty())
+        out.AddMember("short-id", rapidjson::Value(sid.c_str(), alloc), alloc);
+
+    node["path"] >>= path;
+    if (!path.empty())
+        out.AddMember("path", rapidjson::Value(path.c_str(), alloc), alloc);
+
+    node["host"] >>= host;
+    if (!host.empty())
+        out.AddMember("host", rapidjson::Value(host.c_str(), alloc), alloc);
+
+    if (node["headers"].IsDefined() && node["headers"].IsMap()) {
+        rapidjson::Value hdrs(rapidjson::kObjectType);
+        bool hasHeaders = false;
+        for (const auto &kv : node["headers"]) {
+            std::string k = kv.first.as<std::string>();
+            std::string v = kv.second.as<std::string>();
+            hdrs.AddMember(rapidjson::Value(k.c_str(), alloc), rapidjson::Value(v.c_str(), alloc), alloc);
+            hasHeaders = true;
+        }
+        if (hasHeaders)
+            out.AddMember("headers", hdrs, alloc);
+    }
+
+    if (node["no-grpc-header"].IsDefined()) {
+        bool noGrpc = safe_as<std::string>(node["no-grpc-header"]) == "true";
+        out.AddMember("no-grpc-header", noGrpc, alloc);
+    }
+
+    node["x-padding-bytes"] >>= paddingBytes;
+    if (!paddingBytes.empty())
+        out.AddMember("x-padding-bytes", rapidjson::Value(paddingBytes.c_str(), alloc), alloc);
+
+    if (out.ObjectEmpty())
+        return "";
+
+    rapidjson::StringBuffer buf;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
+    out.Accept(writer);
+    return buf.GetString();
+}
+
 static void assignXhttpFields(Proxy &node, const std::string &mode, const std::string &extra,
                               const std::string &download_settings) {
     node.XhttpMode = mode;
     node.XhttpExtra = extra;
     node.XhttpDownloadSettings = download_settings;
+    if (!download_settings.empty())
+        node.XhttpDownload = xrayDownloadToMihomoJson(download_settings);
 }
 
 void commonConstruct(Proxy &node, ProxyType type, const std::string &group, const std::string &remarks,
@@ -1357,7 +1526,8 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
         std::string fp = "chrome", pbk, sid, packet_encoding, encryption; //vless
         std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
         std::string protocol, protoparam, obfs, obfsparam; //ssr
-        std::string flow, mode, xhttp_mode; //trojan/xhttp
+        std::string flow, mode, xhttp_mode, xhttp_headers_json, xhttp_padding_bytes, xhttp_clash_download; //trojan/xhttp
+        tribool xhttp_no_grpc_header;
         std::string user; //socks
         std::string ip, ipv6, private_key, public_key, mtu; //wireguard
         std::string auth, up, down, obfsParam, insecure, alpn; //hysteria
@@ -1639,6 +1809,29 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         singleproxy["xhttp-opts"]["host"] >>= host;
                         singleproxy["xhttp-opts"]["path"] >>= path;
                         singleproxy["xhttp-opts"]["mode"] >>= xhttp_mode;
+                        if (singleproxy["xhttp-opts"]["headers"].IsDefined() &&
+                            singleproxy["xhttp-opts"]["headers"].IsMap()) {
+                            rapidjson::Document hdrsDoc;
+                            hdrsDoc.SetObject();
+                            auto &ha = hdrsDoc.GetAllocator();
+                            for (const auto &kv : singleproxy["xhttp-opts"]["headers"]) {
+                                std::string k = kv.first.as<std::string>();
+                                std::string v = kv.second.as<std::string>();
+                                hdrsDoc.AddMember(rapidjson::Value(k.c_str(), ha),
+                                                  rapidjson::Value(v.c_str(), ha), ha);
+                            }
+                            rapidjson::StringBuffer hbuf;
+                            rapidjson::Writer<rapidjson::StringBuffer> hw(hbuf);
+                            hdrsDoc.Accept(hw);
+                            xhttp_headers_json = hbuf.GetString();
+                        }
+                        if (singleproxy["xhttp-opts"]["no-grpc-header"].IsDefined())
+                            xhttp_no_grpc_header = safe_as<std::string>(
+                                singleproxy["xhttp-opts"]["no-grpc-header"]) == "true";
+                        singleproxy["xhttp-opts"]["x-padding-bytes"] >>= xhttp_padding_bytes;
+                        if (singleproxy["xhttp-opts"]["download-settings"].IsDefined())
+                            xhttp_clash_download = clashDownloadToMihomoJson(
+                                singleproxy["xhttp-opts"]["download-settings"]);
                         edge.clear();
                         break;
                     default:
@@ -1699,8 +1892,15 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                                    packet_addr_flag, global_padding_flag, authenticated_length_flag,
                                    ech_enable_flag, ech_config, ws_max_early_data, ws_early_data_header_name,
                                    v2ray_http_upgrade_fast_open_flag);
-                    if (net == "xhttp")
+                    if (net == "xhttp") {
                         assignXhttpFields(node, xhttp_mode, "", "");
+                        node.XhttpHeaders = xhttp_headers_json;
+                        if (!xhttp_no_grpc_header.is_undef())
+                            node.XhttpNoGrpcHeader = xhttp_no_grpc_header;
+                        node.XhttpPaddingBytes = xhttp_padding_bytes;
+                        if (!xhttp_clash_download.empty())
+                            node.XhttpDownload = xhttp_clash_download;
+                    }
                 }
                 break;
             case "hysteria"_hash:
