@@ -222,7 +222,7 @@ groupGenerate(const std::string &rule, std::vector<Proxy> &nodelist, string_arra
 }
 
 // Export Mihomo canonical download JSON to xhttp-opts.download-settings YAML node
-static void addXhttpDownloadToYaml(YAML::Node &opts, const std::string &download_json) {
+static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_json) {
     if (download_json.empty())
         return;
     rapidjson::Document d;
