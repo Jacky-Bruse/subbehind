@@ -140,6 +140,47 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
         std::string padding = GetMember(xs, "xPaddingBytes");
         if (!padding.empty())
             out.AddMember("x-padding-bytes", rapidjson::Value(padding.c_str(), alloc), alloc);
+
+        // scMaxEachPostBytes → sc-max-each-post-bytes
+        if (xs.HasMember("scMaxEachPostBytes")) {
+            std::string v;
+            if (xs["scMaxEachPostBytes"].IsInt())
+                v = std::to_string(xs["scMaxEachPostBytes"].GetInt());
+            else if (xs["scMaxEachPostBytes"].IsString())
+                v = xs["scMaxEachPostBytes"].GetString();
+            if (!v.empty())
+                out.AddMember("sc-max-each-post-bytes", rapidjson::Value(v.c_str(), alloc), alloc);
+        }
+
+        // xmux → reuse-settings
+        if (xs.HasMember("xmux") && xs["xmux"].IsObject()) {
+            const auto &xm = xs["xmux"];
+            rapidjson::Value rsObj(rapidjson::kObjectType);
+            bool hasReuse = false;
+            const struct { const char *xray; const char *mihomo; } xmuxMap[] = {
+                {"maxConnections",  "max-connections"},
+                {"maxConcurrency",  "max-concurrency"},
+                {"cMaxReuseTimes",  "c-max-reuse-times"},
+                {"hMaxRequestTimes","h-max-request-times"},
+                {"hMaxReusableSecs","h-max-reusable-secs"},
+            };
+            for (const auto &f : xmuxMap) {
+                std::string v;
+                if (xm.HasMember(f.xray)) {
+                    if (xm[f.xray].IsString())
+                        v = xm[f.xray].GetString();
+                    else if (xm[f.xray].IsInt())
+                        v = std::to_string(xm[f.xray].GetInt());
+                }
+                if (!v.empty()) {
+                    rsObj.AddMember(rapidjson::Value(f.mihomo, alloc),
+                                    rapidjson::Value(v.c_str(), alloc), alloc);
+                    hasReuse = true;
+                }
+            }
+            if (hasReuse)
+                out.AddMember("reuse-settings", rsObj, alloc);
+        }
     }
 
     if (out.ObjectEmpty())
@@ -227,6 +268,48 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
     node["x-padding-bytes"] >>= paddingBytes;
     if (!paddingBytes.empty())
         out.AddMember("x-padding-bytes", rapidjson::Value(paddingBytes.c_str(), alloc), alloc);
+
+    std::string scMax;
+    if (node["sc-max-each-post-bytes"].IsDefined())
+        scMax = safe_as<std::string>(node["sc-max-each-post-bytes"]);
+    if (!scMax.empty())
+        out.AddMember("sc-max-each-post-bytes", rapidjson::Value(scMax.c_str(), alloc), alloc);
+
+    if (node["reuse-settings"].IsDefined() && node["reuse-settings"].IsMap()) {
+        rapidjson::Value rsObj(rapidjson::kObjectType);
+        bool hasReuse = false;
+        const auto &rs = node["reuse-settings"];
+        const char *reuseKeys[] = {"max-connections", "max-concurrency", "c-max-reuse-times",
+                                   "h-max-request-times", "h-max-reusable-secs"};
+        for (const char *k : reuseKeys) {
+            std::string val;
+            rs[k] >>= val;
+            if (!val.empty()) {
+                rsObj.AddMember(rapidjson::Value(k, alloc), rapidjson::Value(val.c_str(), alloc), alloc);
+                hasReuse = true;
+            }
+        }
+        if (hasReuse)
+            out.AddMember("reuse-settings", rsObj, alloc);
+    }
+
+    if (node["skip-cert-verify"].IsDefined()) {
+        bool scv = safe_as<std::string>(node["skip-cert-verify"]) == "true";
+        out.AddMember("skip-cert-verify", scv, alloc);
+    }
+
+    std::string tlsFingerprint;
+    node["fingerprint"] >>= tlsFingerprint;
+    if (!tlsFingerprint.empty())
+        out.AddMember("fingerprint", rapidjson::Value(tlsFingerprint.c_str(), alloc), alloc);
+
+    std::string certificate, privateKey;
+    node["certificate"] >>= certificate;
+    if (!certificate.empty())
+        out.AddMember("certificate", rapidjson::Value(certificate.c_str(), alloc), alloc);
+    node["private-key"] >>= privateKey;
+    if (!privateKey.empty())
+        out.AddMember("private-key", rapidjson::Value(privateKey.c_str(), alloc), alloc);
 
     if (out.ObjectEmpty())
         return "";
@@ -1526,7 +1609,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
         std::string fp = "chrome", pbk, sid, packet_encoding, encryption; //vless
         std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
         std::string protocol, protoparam, obfs, obfsparam; //ssr
-        std::string flow, mode, xhttp_mode, xhttp_headers_json, xhttp_padding_bytes, xhttp_clash_download; //trojan/xhttp
+        std::string flow, mode, xhttp_mode, xhttp_headers_json, xhttp_padding_bytes, xhttp_clash_download, xhttp_sc_max_post, xhttp_reuse_json; //trojan/xhttp
         tribool xhttp_no_grpc_header;
         std::string user; //socks
         std::string ip, ipv6, private_key, public_key, mtu; //wireguard
@@ -1829,6 +1912,32 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                             xhttp_no_grpc_header = safe_as<std::string>(
                                 singleproxy["xhttp-opts"]["no-grpc-header"]) == "true";
                         singleproxy["xhttp-opts"]["x-padding-bytes"] >>= xhttp_padding_bytes;
+                        if (singleproxy["xhttp-opts"]["sc-max-each-post-bytes"].IsDefined())
+                            xhttp_sc_max_post = safe_as<std::string>(
+                                singleproxy["xhttp-opts"]["sc-max-each-post-bytes"]);
+                        if (singleproxy["xhttp-opts"]["reuse-settings"].IsDefined() &&
+                            singleproxy["xhttp-opts"]["reuse-settings"].IsMap()) {
+                            rapidjson::Document rsDoc;
+                            rsDoc.SetObject();
+                            auto &ra = rsDoc.GetAllocator();
+                            const auto &rs = singleproxy["xhttp-opts"]["reuse-settings"];
+                            const char *reuseKeys[] = {"max-connections", "max-concurrency",
+                                                       "c-max-reuse-times", "h-max-request-times",
+                                                       "h-max-reusable-secs"};
+                            for (const char *k : reuseKeys) {
+                                std::string val;
+                                rs[k] >>= val;
+                                if (!val.empty())
+                                    rsDoc.AddMember(rapidjson::Value(k, ra),
+                                                    rapidjson::Value(val.c_str(), ra), ra);
+                            }
+                            if (!rsDoc.ObjectEmpty()) {
+                                rapidjson::StringBuffer rbuf;
+                                rapidjson::Writer<rapidjson::StringBuffer> rw(rbuf);
+                                rsDoc.Accept(rw);
+                                xhttp_reuse_json = rbuf.GetString();
+                            }
+                        }
                         if (singleproxy["xhttp-opts"]["download-settings"].IsDefined())
                             xhttp_clash_download = clashDownloadToMihomoJson(
                                 singleproxy["xhttp-opts"]["download-settings"]);
@@ -1898,6 +2007,8 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         if (!xhttp_no_grpc_header.is_undef())
                             node.XhttpNoGrpcHeader = xhttp_no_grpc_header;
                         node.XhttpPaddingBytes = xhttp_padding_bytes;
+                        node.XhttpScMaxEachPostBytes = xhttp_sc_max_post;
+                        node.XhttpReuseSettings = xhttp_reuse_json;
                         if (!xhttp_clash_download.empty())
                             node.XhttpDownload = xhttp_clash_download;
                     }

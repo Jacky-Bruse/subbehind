@@ -270,6 +270,38 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
     if (!padding.empty())
         ds["x-padding-bytes"] = padding;
 
+    std::string scMax = GetMember(d, "sc-max-each-post-bytes");
+    if (!scMax.empty())
+        ds["sc-max-each-post-bytes"] = scMax;
+
+    if (d.HasMember("reuse-settings") && d["reuse-settings"].IsObject()) {
+        const auto &rs = d["reuse-settings"];
+        YAML::Node rsYaml;
+        const char *reuseKeys[] = {"max-connections", "max-concurrency", "c-max-reuse-times",
+                                   "h-max-request-times", "h-max-reusable-secs"};
+        for (const char *k : reuseKeys) {
+            if (rs.HasMember(k) && rs[k].IsString() && rs[k].GetStringLength() > 0)
+                rsYaml[k] = std::string(rs[k].GetString());
+        }
+        if (rsYaml.IsDefined())
+            ds["reuse-settings"] = rsYaml;
+    }
+
+    if (d.HasMember("skip-cert-verify") && d["skip-cert-verify"].IsBool())
+        ds["skip-cert-verify"] = d["skip-cert-verify"].GetBool();
+
+    std::string tlsFingerprint = GetMember(d, "fingerprint");
+    if (!tlsFingerprint.empty())
+        ds["fingerprint"] = tlsFingerprint;
+
+    std::string certificate = GetMember(d, "certificate");
+    if (!certificate.empty())
+        ds["certificate"] = certificate;
+
+    std::string privateKey = GetMember(d, "private-key");
+    if (!privateKey.empty())
+        ds["private-key"] = privateKey;
+
     if (ds.IsDefined())
         opts["download-settings"] = ds;
 }
@@ -886,6 +918,24 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                             singleproxy["xhttp-opts"]["no-grpc-header"] = x.XhttpNoGrpcHeader.get();
                         if (!x.XhttpPaddingBytes.empty())
                             singleproxy["xhttp-opts"]["x-padding-bytes"] = x.XhttpPaddingBytes;
+                        if (!x.XhttpScMaxEachPostBytes.empty())
+                            singleproxy["xhttp-opts"]["sc-max-each-post-bytes"] = x.XhttpScMaxEachPostBytes;
+                        if (!x.XhttpReuseSettings.empty()) {
+                            rapidjson::Document rd;
+                            rd.Parse(x.XhttpReuseSettings.data());
+                            if (!rd.HasParseError() && rd.IsObject()) {
+                                YAML::Node rsYaml;
+                                const char *reuseKeys[] = {"max-connections", "max-concurrency",
+                                                           "c-max-reuse-times", "h-max-request-times",
+                                                           "h-max-reusable-secs"};
+                                for (const char *k : reuseKeys) {
+                                    if (rd.HasMember(k) && rd[k].IsString() && rd[k].GetStringLength() > 0)
+                                        rsYaml[k] = std::string(rd[k].GetString());
+                                }
+                                if (rsYaml.IsDefined())
+                                    singleproxy["xhttp-opts"]["reuse-settings"] = rsYaml;
+                            }
+                        }
                         addXhttpDownloadToYaml(singleproxy["xhttp-opts"], x.XhttpDownload);
                         break;
                     default:
@@ -1558,8 +1608,56 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                             addVlessParam("path", urlEncode(path.empty() ? "/" : path));
                             if (!x.XhttpMode.empty())
                                 addVlessParam("mode", x.XhttpMode);
-                            if (!x.XhttpExtra.empty())
-                                addVlessParam("extra", urlEncode(x.XhttpExtra));
+                            {
+                                // XhttpExtra (from Xray input) already encodes all extra fields.
+                                // For Clash-parsed nodes, synthesize extra from individual fields.
+                                std::string extraToExport = x.XhttpExtra;
+                                if (extraToExport.empty() &&
+                                    (!x.XhttpScMaxEachPostBytes.empty() || !x.XhttpReuseSettings.empty())) {
+                                    rapidjson::Document ed;
+                                    ed.SetObject();
+                                    auto &ea = ed.GetAllocator();
+                                    if (!x.XhttpScMaxEachPostBytes.empty()) {
+                                        int scMax = atoi(x.XhttpScMaxEachPostBytes.c_str());
+                                        if (scMax > 0)
+                                            ed.AddMember("scMaxEachPostBytes", scMax, ea);
+                                    }
+                                    if (!x.XhttpReuseSettings.empty()) {
+                                        rapidjson::Document rd;
+                                        rd.Parse(x.XhttpReuseSettings.data());
+                                        if (!rd.HasParseError() && rd.IsObject()) {
+                                            rapidjson::Value xmux(rapidjson::kObjectType);
+                                            bool hasXmux = false;
+                                            const struct { const char *mihomo; const char *xray; } reuseMap[] = {
+                                                {"max-connections",   "maxConnections"},
+                                                {"max-concurrency",   "maxConcurrency"},
+                                                {"c-max-reuse-times", "cMaxReuseTimes"},
+                                                {"h-max-request-times","hMaxRequestTimes"},
+                                                {"h-max-reusable-secs","hMaxReusableSecs"},
+                                            };
+                                            for (const auto &f : reuseMap) {
+                                                if (rd.HasMember(f.mihomo) && rd[f.mihomo].IsString()
+                                                    && rd[f.mihomo].GetStringLength() > 0) {
+                                                    xmux.AddMember(
+                                                        rapidjson::Value(f.xray, ea),
+                                                        rapidjson::Value(rd[f.mihomo].GetString(), ea), ea);
+                                                    hasXmux = true;
+                                                }
+                                            }
+                                            if (hasXmux)
+                                                ed.AddMember("xmux", xmux, ea);
+                                        }
+                                    }
+                                    if (!ed.ObjectEmpty()) {
+                                        rapidjson::StringBuffer ebuf;
+                                        rapidjson::Writer<rapidjson::StringBuffer> ew(ebuf);
+                                        ed.Accept(ew);
+                                        extraToExport = ebuf.GetString();
+                                    }
+                                }
+                                if (!extraToExport.empty())
+                                    addVlessParam("extra", urlEncode(extraToExport));
+                            }
                             if (!x.XhttpDownloadSettings.empty())
                                 addVlessParam("downloadSettings", urlEncode(x.XhttpDownloadSettings));
                             break;

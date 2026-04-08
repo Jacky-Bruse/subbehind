@@ -474,6 +474,208 @@ void test_singbox_vless_xhttp_preserves_transport() {
     require(node.XhttpExtra == "{\"scMaxEachPostBytes\":1000000}", "expected xhttp extra");
 }
 
+void test_clash_vless_xhttp_sc_max_and_reuse_settings() {
+    const std::string content = R"(proxies:
+  - name: xhttp-full
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      host: cdn.example.com
+      path: /xhttp
+      mode: packet-up
+      sc-max-each-post-bytes: 2000000
+      reuse-settings:
+        max-connections: "16-32"
+        max-concurrency: "0"
+        c-max-reuse-times: "0"
+        h-max-request-times: "600-900"
+        h-max-reusable-secs: "1800-3000"
+)";
+
+    const Proxy node = parse_clash(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(node.XhttpScMaxEachPostBytes == "2000000", "expected sc-max-each-post-bytes to be parsed");
+    require(!node.XhttpReuseSettings.empty(), "expected reuse-settings to be parsed");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("sc-max-each-post-bytes: 2000000") != std::string::npos,
+            "expected sc-max-each-post-bytes to be exported");
+    require(exported.find("reuse-settings:") != std::string::npos,
+            "expected reuse-settings to be exported");
+    require(exported.find("max-connections: 16-32") != std::string::npos,
+            "expected reuse-settings.max-connections to be exported");
+    require(exported.find("h-max-reusable-secs: 1800-3000") != std::string::npos,
+            "expected reuse-settings.h-max-reusable-secs to be exported");
+}
+
+void test_clash_vless_xhttp_extra_exported_to_link() {
+    // Clash YAML with sc-max-each-post-bytes + reuse-settings → export to vless:// link
+    const std::string content = R"(proxies:
+  - name: xhttp-link
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /xhttp
+      mode: packet-up
+      sc-max-each-post-bytes: 1500000
+      reuse-settings:
+        max-connections: "16-32"
+        max-concurrency: "0"
+        h-max-reusable-secs: "1800-3000"
+)";
+
+    std::vector<Proxy> nodes;
+    explodeSub(content, nodes);
+    require(nodes.size() == 1, "expected one node");
+    require(nodes[0].XhttpScMaxEachPostBytes == "1500000", "expected XhttpScMaxEachPostBytes to be set");
+    require(!nodes[0].XhttpReuseSettings.empty(), "expected XhttpReuseSettings to be set");
+
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string exported = proxyToSingle(nodes, kVlessMask, ext);
+    require(exported.find("extra=") != std::string::npos,
+            "expected vless link to contain extra=");
+    require(exported.find("scMaxEachPostBytes") != std::string::npos,
+            "expected extra to contain scMaxEachPostBytes");
+    require(exported.find("xmux") != std::string::npos,
+            "expected extra to contain xmux for reuse-settings");
+    require(exported.find("maxConnections") != std::string::npos,
+            "expected xmux to contain maxConnections");
+}
+
+void test_xray_download_settings_xmux_and_sc_max() {
+    // Xray config with downloadSettings containing scMaxEachPostBytes and xmux
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {
+        "vnext": [
+          {
+            "address": "xhttp.example.com",
+            "port": 443,
+            "users": [{"id": "12345678-1234-1234-1234-123456789012", "encryption": "none"}]
+          }
+        ]
+      },
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "host": "cdn.example.com",
+          "path": "/up",
+          "mode": "packet-up",
+          "downloadSettings": {
+            "address": "dl.example.com",
+            "port": 443,
+            "security": "tls",
+            "xhttpSettings": {
+              "path": "/down",
+              "scMaxEachPostBytes": 500000,
+              "xmux": {
+                "maxConnections": "16-32",
+                "maxConcurrency": "0",
+                "cMaxReuseTimes": "0",
+                "hMaxRequestTimes": "600-900",
+                "hMaxReusableSecs": "1800-3000"
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+})";
+
+    const Proxy node = parse_v2ray_conf(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(!node.XhttpDownload.empty(), "expected XhttpDownload to be set");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("download-settings:") != std::string::npos,
+            "expected download-settings to be exported");
+    require(exported.find("sc-max-each-post-bytes: 500000") != std::string::npos,
+            "expected download-settings.sc-max-each-post-bytes from xray scMaxEachPostBytes");
+    require(exported.find("reuse-settings:") != std::string::npos,
+            "expected download-settings.reuse-settings from xray xmux");
+    require(exported.find("max-connections: 16-32") != std::string::npos,
+            "expected reuse-settings.max-connections from xray xmux.maxConnections");
+    require(exported.find("h-max-reusable-secs: 1800-3000") != std::string::npos,
+            "expected reuse-settings.h-max-reusable-secs from xray xmux.hMaxReusableSecs");
+}
+
+void test_clash_vless_xhttp_download_settings_full() {
+    const std::string content = R"(proxies:
+  - name: xhttp-ds
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /up
+      download-settings:
+        server: dl.example.com
+        port: 443
+        tls: true
+        servername: dl.example.com
+        path: /down
+        x-padding-bytes: "100-500"
+        sc-max-each-post-bytes: 500000
+        skip-cert-verify: false
+        reuse-settings:
+          max-connections: "8"
+          h-max-reusable-secs: "900"
+)";
+
+    const Proxy node = parse_clash(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(!node.XhttpDownload.empty(), "expected download-settings to be parsed");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("download-settings:") != std::string::npos,
+            "expected download-settings to be exported");
+    require(exported.find("sc-max-each-post-bytes: 500000") != std::string::npos,
+            "expected download-settings.sc-max-each-post-bytes to be exported");
+    require(exported.find("reuse-settings:") != std::string::npos,
+            "expected download-settings.reuse-settings to be exported");
+    require(exported.find("max-connections: 8") != std::string::npos,
+            "expected download-settings.reuse-settings.max-connections to be exported");
+    require(exported.find("skip-cert-verify: 0") != std::string::npos ||
+            exported.find("skip-cert-verify: false") != std::string::npos,
+            "expected download-settings.skip-cert-verify to be exported");
+}
+
 void test_quanx_export_skips_vless_xhttp_node() {
     std::vector<Proxy> nodes;
     explodeSub(
@@ -510,6 +712,10 @@ int main() {
         test_v2ray_vless_tls_settings_preserve_sni_and_alpn();
         test_vless_xhttp_round_trip_preserves_type();
         test_singbox_vless_xhttp_preserves_transport();
+        test_clash_vless_xhttp_sc_max_and_reuse_settings();
+        test_clash_vless_xhttp_extra_exported_to_link();
+        test_xray_download_settings_xmux_and_sc_max();
+        test_clash_vless_xhttp_download_settings_full();
         test_quanx_export_skips_vless_xhttp_node();
     } catch (const std::exception &e) {
         std::cerr << "pr4_regression_test failed: " << e.what() << '\n';
