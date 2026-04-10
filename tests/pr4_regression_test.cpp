@@ -426,10 +426,14 @@ void test_vless_xhttp_round_trip_preserves_type() {
         nodes);
 
     require(nodes.size() == 1, "expected one node");
+    std::cerr << "[debug] TransferProtocol=" << nodes[0].TransferProtocol
+              << " XhttpMode=" << nodes[0].XhttpMode
+              << " TLSStr=" << nodes[0].TLSStr << "\n";
 
     extra_settings ext;
     constexpr int kVlessMask = 32;
     const std::string exported = proxyToSingle(nodes, kVlessMask, ext);
+    std::cerr << "[debug] exported=" << exported << "\n";
     require(exported.find("type=xhttp") != std::string::npos, "expected exported link to keep xhttp");
     require(exported.find("mode=packet-up") != std::string::npos, "expected exported link to keep xhttp mode");
     require(exported.find("host=cdn.example.com") != std::string::npos, "expected exported link to keep host");
