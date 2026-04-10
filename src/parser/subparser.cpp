@@ -3979,7 +3979,21 @@ void explodeSub(std::string sub, std::vector<Proxy> &nodes) {
 
     //try to parse as normal subscription
     if (!processed) {
-        sub = urlSafeBase64Decode(sub);
+        // Direct protocol links must not be base64-decoded — doing so corrupts them because
+        // letters/digits in the URL are valid base64 chars, and '=' in query params terminates
+        // the decoder loop early.  Skip decoding when the input already looks like a link.
+        static const char *const directSchemes[] = {
+            "vless://", "vmess://", "ss://", "ssr://", "trojan://", "trojan-go://",
+            "hysteria://", "hy://", "hysteria2://", "hy2://", "tuic://", "anytls://",
+            "wg://", "wireguard://", "socks://", "socks5://", nullptr
+        };
+        bool isDirectLink = false;
+        const std::string trimmedSub = trim(sub);
+        for (int si = 0; directSchemes[si]; ++si) {
+            if (startsWith(trimmedSub, directSchemes[si])) { isDirectLink = true; break; }
+        }
+        if (!isDirectLink)
+            sub = urlSafeBase64Decode(sub);
         if (regFind(sub, "(vmess|shadowsocks|http|trojan)\\s*?=")) {
             if (explodeSurge(sub, nodes))
                 return;
