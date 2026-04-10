@@ -47,6 +47,20 @@ jobs:
           sudo install -m644 quickjspp.hpp /usr/include
           cd .. && rm -rf quickjspp
 
+      - name: Install libcron
+        run: |
+          git clone https://github.com/PerMalmberg/libcron --depth=1
+          cd libcron
+          git submodule update --init
+          cmake -DCMAKE_BUILD_TYPE=Release .
+          make libcron -j$(nproc)
+          sudo install -m644 libcron/out/Release/liblibcron.a /usr/lib/
+          sudo install -d /usr/include/libcron/
+          sudo install -m644 libcron/include/libcron/* /usr/include/libcron/
+          sudo install -d /usr/include/date/
+          sudo install -m644 libcron/externals/date/include/date/* /usr/include/date/
+          cd .. && rm -rf libcron
+
       - name: Configure
         run: cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DBUILD_STATIC_LIBRARY=OFF .
 
