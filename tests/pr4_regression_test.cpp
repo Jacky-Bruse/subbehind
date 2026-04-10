@@ -6,6 +6,7 @@
 
 #include "generator/config/subexport.h"
 #include "parser/subparser.h"
+#include "utils/base64/base64.h"
 
 namespace {
 
@@ -426,18 +427,15 @@ void test_vless_xhttp_round_trip_preserves_type() {
         nodes);
 
     require(nodes.size() == 1, "expected one node");
-    std::cerr << "[debug] TransferProtocol=" << nodes[0].TransferProtocol
-              << " XhttpMode=" << nodes[0].XhttpMode
-              << " TLSStr=" << nodes[0].TLSStr << "\n";
 
     extra_settings ext;
     constexpr int kVlessMask = 32;
-    const std::string exported = proxyToSingle(nodes, kVlessMask, ext);
-    std::cerr << "[debug] exported=" << exported << "\n";
-    require(exported.find("type=xhttp") != std::string::npos, "expected exported link to keep xhttp");
-    require(exported.find("mode=packet-up") != std::string::npos, "expected exported link to keep xhttp mode");
-    require(exported.find("host=cdn.example.com") != std::string::npos, "expected exported link to keep host");
-    require(exported.find("path=%2Fxhttp") != std::string::npos || exported.find("path=/xhttp") != std::string::npos,
+    // proxyToSingle returns a base64-encoded subscription — decode before inspecting
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    require(decoded.find("type=xhttp") != std::string::npos, "expected exported link to keep xhttp");
+    require(decoded.find("mode=packet-up") != std::string::npos, "expected exported link to keep xhttp mode");
+    require(decoded.find("host=cdn.example.com") != std::string::npos, "expected exported link to keep host");
+    require(decoded.find("path=%2Fxhttp") != std::string::npos || decoded.find("path=/xhttp") != std::string::npos,
             "expected exported link to keep path");
 }
 
@@ -551,14 +549,15 @@ void test_clash_vless_xhttp_extra_exported_to_link() {
 
     extra_settings ext;
     constexpr int kVlessMask = 32;
-    const std::string exported = proxyToSingle(nodes, kVlessMask, ext);
-    require(exported.find("extra=") != std::string::npos,
+    // proxyToSingle returns a base64-encoded subscription — decode before inspecting
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    require(decoded.find("extra=") != std::string::npos,
             "expected vless link to contain extra=");
-    require(exported.find("scMaxEachPostBytes") != std::string::npos,
+    require(decoded.find("scMaxEachPostBytes") != std::string::npos,
             "expected extra to contain scMaxEachPostBytes");
-    require(exported.find("xmux") != std::string::npos,
+    require(decoded.find("xmux") != std::string::npos,
             "expected extra to contain xmux for reuse-settings");
-    require(exported.find("maxConnections") != std::string::npos,
+    require(decoded.find("maxConnections") != std::string::npos,
             "expected xmux to contain maxConnections");
 }
 
