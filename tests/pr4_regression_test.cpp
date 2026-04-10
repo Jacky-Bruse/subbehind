@@ -676,6 +676,120 @@ void test_clash_vless_xhttp_download_settings_full() {
             "expected download-settings.skip-cert-verify to be exported");
 }
 
+void test_clash_vless_xhttp_reuse_settings_h_keep_alive_period() {
+    // h-keep-alive-period 是 mihomo Apr 9 新增字段，验证解析与导出
+    const std::string content = R"(proxies:
+  - name: xhttp-reuse-hkap
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /xhttp
+      mode: packet-up
+      reuse-settings:
+        max-connections: "16"
+        h-keep-alive-period: "30"
+)";
+
+    const Proxy node = parse_clash(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(!node.XhttpReuseSettings.empty(), "expected reuse-settings to be parsed");
+    require(node.XhttpReuseSettings.find("h-keep-alive-period") != std::string::npos,
+            "expected h-keep-alive-period to be stored in XhttpReuseSettings JSON");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("h-keep-alive-period: 30") != std::string::npos,
+            "expected h-keep-alive-period to be exported in reuse-settings");
+}
+
+void test_clash_vless_xhttp_sc_max_range_passthrough() {
+    // sc-max-each-post-bytes 支持范围格式字符串（如 "100-200"），验证透传正确
+    const std::string content = R"(proxies:
+  - name: xhttp-sc-range
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /xhttp
+      mode: packet-up
+      sc-max-each-post-bytes: "1000000-2000000"
+)";
+
+    const Proxy node = parse_clash(content);
+    require(node.XhttpScMaxEachPostBytes == "1000000-2000000",
+            "expected range format sc-max-each-post-bytes to be stored as-is");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("sc-max-each-post-bytes: 1000000-2000000") != std::string::npos,
+            "expected range format sc-max-each-post-bytes to be exported as-is");
+}
+
+void test_clash_vless_grpc_new_opts() {
+    // grpc-opts 新增 max-connections/min-streams/max-streams（mihomo Apr 5）
+    const std::string content = R"(proxies:
+  - name: grpc-node
+    type: vless
+    server: grpc.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: grpc
+    grpc-opts:
+      grpc-service-name: myservice
+      grpc-mode: gun
+      max-connections: 4
+      min-streams: 2
+      max-streams: 8
+)";
+
+    const Proxy node = parse_clash(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(node.TransferProtocol == "grpc", "expected grpc network");
+    require(node.GRPCServiceName == "myservice", "expected grpc-service-name");
+    require(node.GRPCMode == "gun", "expected grpc-mode");
+    require(node.GRPCMaxConnections == 4, "expected max-connections to be parsed");
+    require(node.GRPCMinStreams == 2, "expected min-streams to be parsed");
+    require(node.GRPCMaxStreams == 8, "expected max-streams to be parsed");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("network: grpc") != std::string::npos, "expected grpc network in export");
+    require(exported.find("grpc-service-name: myservice") != std::string::npos,
+            "expected grpc-service-name in export");
+    require(exported.find("max-connections: 4") != std::string::npos,
+            "expected max-connections in grpc-opts export");
+    require(exported.find("min-streams: 2") != std::string::npos,
+            "expected min-streams in grpc-opts export");
+    require(exported.find("max-streams: 8") != std::string::npos,
+            "expected max-streams in grpc-opts export");
+}
+
 void test_quanx_export_skips_vless_xhttp_node() {
     std::vector<Proxy> nodes;
     explodeSub(
@@ -717,6 +831,9 @@ int main() {
         test_xray_download_settings_xmux_and_sc_max();
         test_clash_vless_xhttp_download_settings_full();
         test_quanx_export_skips_vless_xhttp_node();
+        test_clash_vless_xhttp_reuse_settings_h_keep_alive_period();
+        test_clash_vless_xhttp_sc_max_range_passthrough();
+        test_clash_vless_grpc_new_opts();
     } catch (const std::exception &e) {
         std::cerr << "pr4_regression_test failed: " << e.what() << '\n';
         return 1;

@@ -280,7 +280,7 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
         bool hasReuse = false;
         const auto &rs = node["reuse-settings"];
         const char *reuseKeys[] = {"max-connections", "max-concurrency", "c-max-reuse-times",
-                                   "h-max-request-times", "h-max-reusable-secs"};
+                                   "h-max-request-times", "h-max-reusable-secs", "h-keep-alive-period"};
         for (const char *k : reuseKeys) {
             std::string val;
             rs[k] >>= val;
@@ -1610,6 +1610,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
         std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
         std::string protocol, protoparam, obfs, obfsparam; //ssr
         std::string flow, mode, xhttp_mode, xhttp_headers_json, xhttp_padding_bytes, xhttp_clash_download, xhttp_sc_max_post, xhttp_reuse_json; //trojan/xhttp
+        uint32_t grpc_max_connections = 0, grpc_min_streams = 0, grpc_max_streams = 0;
         tribool xhttp_no_grpc_header;
         std::string user; //socks
         std::string ip, ipv6, private_key, public_key, mtu; //wireguard
@@ -1886,6 +1887,13 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                     case "grpc"_hash:
                         singleproxy["servername"] >>= host;
                         singleproxy["grpc-opts"]["grpc-service-name"] >>= path;
+                        singleproxy["grpc-opts"]["grpc-mode"] >>= mode;
+                        if (singleproxy["grpc-opts"]["max-connections"].IsDefined())
+                            grpc_max_connections = safe_as<uint32_t>(singleproxy["grpc-opts"]["max-connections"]);
+                        if (singleproxy["grpc-opts"]["min-streams"].IsDefined())
+                            grpc_min_streams = safe_as<uint32_t>(singleproxy["grpc-opts"]["min-streams"]);
+                        if (singleproxy["grpc-opts"]["max-streams"].IsDefined())
+                            grpc_max_streams = safe_as<uint32_t>(singleproxy["grpc-opts"]["max-streams"]);
                         edge.clear();
                         break;
                     case "xhttp"_hash:
@@ -1923,7 +1931,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                             const auto &rs = singleproxy["xhttp-opts"]["reuse-settings"];
                             const char *reuseKeys[] = {"max-connections", "max-concurrency",
                                                        "c-max-reuse-times", "h-max-request-times",
-                                                       "h-max-reusable-secs"};
+                                                       "h-max-reusable-secs", "h-keep-alive-period"};
                             for (const char *k : reuseKeys) {
                                 std::string val;
                                 rs[k] >>= val;
@@ -2011,6 +2019,11 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         node.XhttpReuseSettings = xhttp_reuse_json;
                         if (!xhttp_clash_download.empty())
                             node.XhttpDownload = xhttp_clash_download;
+                    }
+                    if (net == "grpc") {
+                        node.GRPCMaxConnections = grpc_max_connections;
+                        node.GRPCMinStreams = grpc_min_streams;
+                        node.GRPCMaxStreams = grpc_max_streams;
                     }
                 }
                 break;

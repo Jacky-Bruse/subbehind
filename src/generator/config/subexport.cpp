@@ -278,7 +278,7 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
         const auto &rs = d["reuse-settings"];
         YAML::Node rsYaml;
         const char *reuseKeys[] = {"max-connections", "max-concurrency", "c-max-reuse-times",
-                                   "h-max-request-times", "h-max-reusable-secs"};
+                                   "h-max-request-times", "h-max-reusable-secs", "h-keep-alive-period"};
         for (const char *k : reuseKeys) {
             if (rs.HasMember(k) && rs[k].IsString() && rs[k].GetStringLength() > 0)
                 rsYaml[k] = std::string(rs[k].GetString());
@@ -897,6 +897,12 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                         singleproxy["network"] = x.TransferProtocol;
                         singleproxy["grpc-opts"]["grpc-mode"] = x.GRPCMode;
                         singleproxy["grpc-opts"]["grpc-service-name"] = x.GRPCServiceName;
+                        if (x.GRPCMaxConnections > 0)
+                            singleproxy["grpc-opts"]["max-connections"] = x.GRPCMaxConnections;
+                        if (x.GRPCMinStreams > 0)
+                            singleproxy["grpc-opts"]["min-streams"] = x.GRPCMinStreams;
+                        if (x.GRPCMaxStreams > 0)
+                            singleproxy["grpc-opts"]["max-streams"] = x.GRPCMaxStreams;
                         break;
                     case "xhttp"_hash:
                         singleproxy["network"] = x.TransferProtocol;
@@ -927,7 +933,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                                 YAML::Node rsYaml;
                                 const char *reuseKeys[] = {"max-connections", "max-concurrency",
                                                            "c-max-reuse-times", "h-max-request-times",
-                                                           "h-max-reusable-secs"};
+                                                           "h-max-reusable-secs", "h-keep-alive-period"};
                                 for (const char *k : reuseKeys) {
                                     if (rd.HasMember(k) && rd[k].IsString() && rd[k].GetStringLength() > 0)
                                         rsYaml[k] = std::string(rd[k].GetString());

@@ -107,6 +107,9 @@ struct Proxy {
     // ===== gRPC =====
     String GRPCServiceName;
     String GRPCMode;
+    uint32_t GRPCMaxConnections = 0;
+    uint32_t GRPCMinStreams = 0;
+    uint32_t GRPCMaxStreams = 0;
 
     // ===== XHTTP =====
     String XhttpMode;

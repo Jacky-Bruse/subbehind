@@ -1,0 +1,33 @@
+name: Regression Tests
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            cmake g++ \
+            libcurl4-openssl-dev \
+            libpcre2-dev \
+            libyaml-cpp-dev \
+            rapidjson-dev
+
+      - name: Configure
+        run: cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DBUILD_STATIC_LIBRARY=OFF .
+
+      - name: Build test
+        run: make pr4_regression_test -j$(nproc)
+
+      - name: Run test
+        run: ./pr4_regression_test
