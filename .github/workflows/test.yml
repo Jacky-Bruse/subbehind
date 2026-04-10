@@ -31,6 +31,22 @@ jobs:
           sudo make install -j$(nproc)
           cd .. && rm -rf toml11
 
+      - name: Install quickjspp
+        run: |
+          git clone --no-checkout https://github.com/ftk/quickjspp.git
+          cd quickjspp
+          git fetch origin 0c00c48895919fc02da3f191a2da06addeb07f09
+          git checkout 0c00c48895919fc02da3f191a2da06addeb07f09
+          git submodule update --init
+          cmake -DCMAKE_BUILD_TYPE=Release .
+          make quickjs -j$(nproc)
+          sudo install -d /usr/lib/quickjs/
+          sudo install -m644 quickjs/libquickjs.a /usr/lib/quickjs/
+          sudo install -d /usr/include/quickjs/
+          sudo install -m644 quickjs/quickjs.h quickjs/quickjs-libc.h /usr/include/quickjs/
+          sudo install -m644 quickjspp.hpp /usr/include
+          cd .. && rm -rf quickjspp
+
       - name: Configure
         run: cmake -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTS=ON -DBUILD_STATIC_LIBRARY=OFF .
 
