@@ -44,6 +44,7 @@ SET(CORE_LIBRARY_SOURCES
 SET(TEST_LIBRARY_SOURCES
     src/generator/config/ruleconvert.cpp
     src/generator/config/subexport.cpp
+    src/generator/template/templates.cpp
     src/parser/subparser.cpp
     src/utils/base64/base64.cpp
     src/utils/codepage.cpp
