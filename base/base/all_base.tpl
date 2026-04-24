@@ -112,6 +112,16 @@ dns:
   
   # 优化后的 Filter
 fake-ip-filter:
+    - '*.openai.com'
+    - '*.chatgpt.com'
+    - '*.oaistatic.com'
+    - '*.oaiusercontent.com'
+    - '*.openaiusercontent.com'
+    - 'api.openai.com'
+    - 'auth.openai.com'
+    - 'chatgpt.com'
+    - 'cdn.openai.com'
+    - 'oaistatic.com'
     - "dns.google"
     - "geosite:fake-ip-filter"
     # ===============================================================
