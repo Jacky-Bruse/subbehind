@@ -111,7 +111,18 @@ dns:
       - 240.0.0.0/4
   
   # 优化后的 Filter
-fake-ip-filter:
+  fake-ip-filter:
+    - "*.openai.com"
+    - "*.chatgpt.com"
+    - "*.oaiusercontent.com"
+    - "*.oaistatic.com"
+    - "*.openaiapi.com"
+    - "auth.openai.com"
+    - "*.auth0.com"
+    - api.openai.com
+    - api.openai.com.cdn.cloudflare.net
+    - "+.openai.com"
+
     - "dns.google"
     - "geosite:fake-ip-filter"
     # ===============================================================
@@ -137,18 +148,7 @@ fake-ip-filter:
     # 保险项（可保留）
     - "*.cftunnel.com"
     - "*.cloudflare.com"
-    # OpenAI
-    # 主要服务
-    - "*.openai.com"
-    - "*.chatgpt.com"
-    # 用户内容 CDN
-    - "*.oaiusercontent.com"
-    - "*.oaistatic.com"
-    # OpenAI 自有 CDN / 静态资源
-    - "*.openaiapi.com"
-    # 身份验证（Auth0）
-    - "auth.openai.com"
-    - "*.auth0.com"
+
     # Stripe 支付（订阅 Plus 需要）
     - "*.stripe.com"
     # Sentry 错误上报（可选）
