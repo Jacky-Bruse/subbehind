@@ -705,7 +705,7 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
             if (ext.nodelist) {
                 YAML::Node yamlnode;
                 proxyToClash(nodes, yamlnode, dummy_group, argTarget == "clashr", ext);
-                output_content = YAML::Dump(yamlnode);
+                output_content = formatterShortId(YAML::Dump(yamlnode));
             } else {
                 if (render_template(fetchFile(lClashBase, proxy, global.cacheConfig), tpl_args, base_content,
                                     global.templatePath) != 0) {

@@ -1056,7 +1056,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
 }
 
 
-void formatterShortId(std::string &input) {
+std::string formatterShortId(std::string input) {
     std::string target = "short-id:";
     size_t startPos = input.find(target);
 
@@ -1081,6 +1081,7 @@ void formatterShortId(std::string &input) {
         // 继续查找下一个实例
         startPos = input.find(target, startPos + 1);
     }
+    return input;
 }
 
 std::string proxyToClash(std::vector<Proxy> &nodes, const std::string &base_conf,
@@ -1130,8 +1131,7 @@ std::string proxyToClash(std::vector<Proxy> &nodes, const std::string &base_conf
     //rulesetToClash(yamlnode, ruleset_content_array, ext.overwrite_original_rules, ext.clash_new_field_name);
     //std::string output_content = YAML::Dump(yamlnode);
     replaceAll(output_content, "!<str> ", "");
-    formatterShortId(output_content);
-    return output_content;
+    return formatterShortId(std::move(output_content));
 }
 
 void replaceAll(std::string &input, const std::string &search, const std::string &replace) {
@@ -1358,6 +1358,19 @@ std::string proxyToSurge(std::vector<Proxy> &nodes, const std::string &base_conf
                     proxy += ",sni=" + x.ServerName;
                 if (!x.Ports.empty())
                     proxy += ",port-hopping=" + x.Ports;
+                break;
+            case ProxyType::AnyTLS:
+                if (surge_ver < 4)
+                    continue;
+                proxy = "anytls, " + hostname + ", " + port + ", password=" + password;
+                if (!x.SNI.empty())
+                    proxy += ", sni=" + x.SNI;
+                if (!scv.is_undef())
+                    proxy += ", skip-cert-verify=" + scv.get_str();
+                if (!x.Fingerprint.empty())
+                    proxy += ", server-cert-fingerprint-sha256=" + x.Fingerprint;
+                if (!tls13.is_undef())
+                    proxy += ", tls13=" + std::string(tls13 ? "true" : "false");
                 break;
             case ProxyType::WireGuard:
                 if (surge_ver < 4 && surge_ver != -3)
