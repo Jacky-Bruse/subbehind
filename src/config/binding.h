@@ -243,6 +243,17 @@ namespace INIBinding
                     continue;
                 }
 
+                while(rules_upper_bound > 2 && startsWith(vArray[rules_upper_bound - 1], "!!"))
+                {
+                    std::string keyval = vArray[rules_upper_bound - 1].substr(2);
+                    auto eqpos = keyval.find('=');
+                    if(eqpos != std::string::npos)
+                        conf.Extras[keyval.substr(0, eqpos)] = keyval.substr(eqpos + 1);
+                    else
+                        conf.Extras[keyval] = "true";
+                    rules_upper_bound--;
+                }
+
                 if(conf.Type == ProxyGroupType::URLTest || conf.Type == ProxyGroupType::LoadBalance || conf.Type == ProxyGroupType::Fallback)
                 {
                     if(rules_upper_bound < 5)
