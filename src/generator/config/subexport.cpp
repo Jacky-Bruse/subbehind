@@ -46,7 +46,6 @@ bool isNumeric(const std::string &str) {
     return true;
 }
 
-
 std::string
 vmessLinkConstruct(const std::string &remarks, const std::string &add, const std::string &port, const std::string &type,
                    const std::string &id, const std::string &aid, const std::string &net, const std::string &path,
@@ -1602,7 +1601,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                 if (!packet_encoding.empty())
                     addVlessParam("packet-encoding", packet_encoding);
                 if (!alpns.empty())
-                    addVlessParam("alpn", alpns[0]);
+                    addVlessParam("alpn", urlEncode(join(alpns, ",")));
                 if (!sni.empty())
                     addVlessParam("sni", sni);
                 if (!transproto.empty()) {

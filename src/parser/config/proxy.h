@@ -1,6 +1,7 @@
 #ifndef PROXY_H_INCLUDED
 #define PROXY_H_INCLUDED
 
+#include <map>
 #include <string>
 #include <vector>
 
@@ -8,6 +9,7 @@
 
 using String = std::string;
 using StringArray = std::vector<String>;
+using StringMap = std::map<String, String>;
 
 enum class ProxyType
 {
