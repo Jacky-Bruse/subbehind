@@ -135,6 +135,17 @@ namespace toml
                 throw serialization_error(format_error("Ruleset has unsupported type!", v.at("type").location(), "should be one of following: surge-ruleset, quantumultx, clash-domain, clash-ipcidr, clash-classic"), v.at("type").location());
             }
             conf.Url += find<String>(v, "ruleset");
+            conf.Format = find_or<String>(v, "format", "");
+            if(!conf.Format.empty())
+            {
+                conf.Format = toLower(conf.Format);
+                if(type != "clash-domain" && type != "clash-ipcidr" && type != "clash-classic")
+                    throw serialization_error(format_error("Ruleset format is only supported for Clash rule-providers!", v.at("format").location(), "format is valid only with type: clash-domain, clash-ipcidr, clash-classic"), v.at("format").location());
+                if(conf.Format != "yaml" && conf.Format != "text" && conf.Format != "mrs")
+                    throw serialization_error(format_error("Ruleset has unsupported format!", v.at("format").location(), "should be one of following: yaml, text, mrs"), v.at("format").location());
+                if(conf.Format == "mrs" && type == "clash-classic")
+                    throw serialization_error(format_error("Ruleset format mrs is unsupported for clash-classic!", v.at("format").location(), "mrs can only be used with clash-domain or clash-ipcidr"), v.at("format").location());
+            }
             conf.Interval = find_or<Integer>(v, "interval", 86400);
             return conf;
         }
