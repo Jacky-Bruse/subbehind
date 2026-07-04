@@ -1,10 +1,14 @@
 #include <exception>
+#include <future>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
+#include <yaml-cpp/yaml.h>
+
 #include "generator/config/subexport.h"
+#include "generator/config/ruleconvert.h"
 #include "parser/subparser.h"
 #include "utils/base64/base64.h"
 
@@ -812,6 +816,223 @@ void test_quanx_export_skips_vless_xhttp_node() {
             "expected QuanX export to avoid misleading over-tls fallback");
 }
 
+// P1-1: formatterShortId 不得越界吞掉 download-settings 中 short-id 之后的键
+void test_formatter_short_id_preserves_xhttp_download_settings() {
+    const std::string content = R"(proxies:
+  - name: xhttp-reality-ds
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    reality-opts:
+      public-key: main-pbk
+      short-id: aabbccdd
+    xhttp-opts:
+      path: /up
+      download-settings:
+        server: dl.example.com
+        port: 443
+        public-key: dl-pbk
+        short-id: 11223344
+        path: /down
+        host: dl-host.example.com
+)";
+
+    const Proxy node = parse_clash(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    // download-settings 中 short-id 之后的键必须完整保留（旧实现会被吞进引号）
+    require(exported.find("path: /down") != std::string::npos,
+            "download-settings.path after short-id must survive");
+    require(exported.find("dl-host.example.com") != std::string::npos,
+            "download-settings.host after short-id must survive");
+    // 两个 short-id 都应被引号包裹且值未被污染
+    require(exported.find("\"aabbccdd\"") != std::string::npos,
+            "reality-opts.short-id must be quoted and intact");
+    require(exported.find("\"11223344\"") != std::string::npos,
+            "download-settings.short-id must be quoted and intact");
+}
+
+// P1-4: 链接同时带 host= 与 sni= 时，Host 头取 host，不得被 sni 覆盖
+void test_vless_link_ws_host_and_sni_distinct() {
+    const std::string content =
+        "vless://12345678-1234-1234-1234-123456789012@edge.example.com:443"
+        "?security=tls&type=ws&host=ws-host.example.com&sni=tls-sni.example.com&path=%2Fws"
+        "#ws-node";
+
+    const Proxy node = parse_link(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(node.TransferProtocol == "ws", "expected ws transport");
+    require(node.Host == "ws-host.example.com",
+            "WS Host header must come from host=, not sni=");
+    require(node.SNI == "tls-sni.example.com", "SNI must come from sni=");
+}
+
+// P1-3: 非 Reality 节点若链接带 fp，client-fingerprint 需输出；Reality 无 short-id 仍需默认 random
+void test_vless_client_fingerprint_output() {
+    // 普通 TLS ws 节点，链接带 fp=chrome
+    {
+        const std::string content =
+            "vless://12345678-1234-1234-1234-123456789012@edge.example.com:443"
+            "?security=tls&type=ws&host=h.example.com&path=%2Fws&fp=chrome#plain-fp";
+        std::vector<Proxy> nodes;
+        explodeSub(content, nodes);
+        require(nodes.size() == 1, "expected one node");
+        std::vector<RulesetContent> rulesets;
+        ProxyGroupConfigs groups;
+        extra_settings ext;
+        ext.nodelist = true;
+        ext.clash_new_field_name = true;
+        const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+        require(exported.find("client-fingerprint: chrome") != std::string::npos,
+                "plain TLS node must export client-fingerprint from fp=");
+    }
+    // Reality 有 public-key、无 short-id、未显式 fp → 默认 random
+    {
+        const std::string content = R"(proxies:
+  - name: reality-no-sid
+    type: vless
+    server: r.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+    reality-opts:
+      public-key: only-pbk
+)";
+        const Proxy node = parse_clash(content);
+        std::vector<Proxy> nodes{node};
+        std::vector<RulesetContent> rulesets;
+        ProxyGroupConfigs groups;
+        extra_settings ext;
+        ext.nodelist = true;
+        ext.clash_new_field_name = true;
+        const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+        require(exported.find("client-fingerprint: random") != std::string::npos,
+                "reality node without short-id must default client-fingerprint to random");
+    }
+}
+
+// P1-5: hysteria2 端口跳跃范围链接不得被丢弃，密码需 URL 解码
+void test_hysteria2_link_port_hopping_and_password_decode() {
+    const std::string content =
+        "hysteria2://p%40ss@hop.example.com:40000-50000?insecure=1&sni=h.example.com#hy2-hop";
+    std::vector<Proxy> nodes;
+    explodeSub(content, nodes);
+    require(nodes.size() == 1, "port-hopping hy2 link must not be dropped");
+    require(nodes.front().Type == ProxyType::Hysteria2, "expected Hysteria2 node");
+    require(nodes.front().Port == 40000, "base port must be first port of range");
+    require(nodes.front().Ports == "40000-50000", "ports must retain full hop range");
+    require(nodes.front().Password == "p@ss", "password must be URL-decoded");
+}
+
+// P1-6: 明文 mieru 链接不得被 base64 误解码，应正确解析账号密码
+void test_mieru_plaintext_link() {
+    const std::string content =
+        "mieru://myuser:mypass@mieru.example.com:8964?protocol=TCP#mieru-node";
+    std::vector<Proxy> nodes;
+    explodeSub(content, nodes);
+    require(nodes.size() == 1, "plaintext mieru link must parse to one node");
+    require(nodes.front().Type == ProxyType::Mieru, "expected Mieru node");
+    require(nodes.front().Username == "myuser", "mieru username must parse correctly");
+    require(nodes.front().Password == "mypass", "mieru password must parse correctly");
+}
+
+// P1-2 + P2-2: AnyTLS 往返保留 sni、client-fingerprint、全部 alpn 与 idle 字段
+void test_anytls_clash_roundtrip_fields() {
+    const std::string content = R"(proxies:
+  - name: anytls-node
+    type: anytls
+    server: at.example.com
+    port: 443
+    password: secret
+    sni: at-sni.example.com
+    client-fingerprint: firefox
+    idle-session-check-interval: 45
+    min-idle-session: 3
+    alpn:
+      - h2
+      - http/1.1
+)";
+    const Proxy node = parse_clash(content);
+    require(node.Type == ProxyType::AnyTLS, "expected AnyTLS node");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("sni: at-sni.example.com") != std::string::npos,
+            "AnyTLS sni must be exported");
+    require(exported.find("client-fingerprint: firefox") != std::string::npos,
+            "AnyTLS client-fingerprint must round-trip (not read from wrong key)");
+    require(exported.find("h2") != std::string::npos && exported.find("http/1.1") != std::string::npos,
+            "all alpn entries must survive");
+    require(exported.find("idle-session-check-interval: 45") != std::string::npos,
+            "non-default idle-session-check-interval must be exported");
+    require(exported.find("min-idle-session: 3") != std::string::npos,
+            "non-default min-idle-session must be exported");
+}
+
+// P2-1: hysteria2 导出不得包含非 mihomo 字段 auth/mport
+void test_hysteria2_export_omits_nonstandard_fields() {
+    const std::string content =
+        "hysteria2://pw@h.example.com:443?insecure=1&sni=h.example.com#hy2";
+    std::vector<Proxy> nodes;
+    explodeSub(content, nodes);
+    require(nodes.size() == 1, "expected one node");
+
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("auth:") == std::string::npos,
+            "hysteria2 export must not contain non-mihomo 'auth' field");
+    require(exported.find("mport:") == std::string::npos,
+            "hysteria2 export must not contain non-mihomo 'mport' field");
+    require(exported.find("password: pw") != std::string::npos,
+            "hysteria2 export must keep password");
+}
+
+// R1: overwrite_original_rules=false 时，base 模板已有规则须参与去重，
+// 拉取到的同名规则（type+pattern 相同）不得重复输出
+void test_ruleset_dedup_against_base_rules() {
+    YAML::Node base = YAML::Load("rules:\n  - DOMAIN-SUFFIX,dup.com,DIRECT\n");
+
+    RulesetContent rc;
+    rc.rule_group = "PROXY";
+    rc.rule_type = RULESET_SURGE;
+    std::promise<std::string> pr;
+    pr.set_value("DOMAIN-SUFFIX,dup.com\nDOMAIN-SUFFIX,unique.com");
+    rc.rule_content = pr.get_future().share();
+
+    std::vector<RulesetContent> rulesets{rc};
+    const std::string out = rulesetToClashStr(base, rulesets, false, true);
+
+    // dup.com 只能出现一次（来自 base，拉取的重复项被去重）
+    size_t first = out.find("dup.com");
+    require(first != std::string::npos, "base rule dup.com must be present");
+    require(out.find("dup.com", first + 1) == std::string::npos,
+            "duplicate rule matching a base rule must be deduplicated");
+    // 非重复规则仍需正常输出
+    require(out.find("DOMAIN-SUFFIX,unique.com,PROXY") != std::string::npos,
+            "non-duplicate fetched rule must still be exported");
+}
+
 } // namespace
 
 int main() {
@@ -837,6 +1058,14 @@ int main() {
         test_clash_vless_xhttp_reuse_settings_h_keep_alive_period();
         test_clash_vless_xhttp_sc_max_range_passthrough();
         test_clash_vless_grpc_new_opts();
+        test_formatter_short_id_preserves_xhttp_download_settings();
+        test_vless_link_ws_host_and_sni_distinct();
+        test_vless_client_fingerprint_output();
+        test_hysteria2_link_port_hopping_and_password_decode();
+        test_mieru_plaintext_link();
+        test_anytls_clash_roundtrip_fields();
+        test_hysteria2_export_omits_nonstandard_fields();
+        test_ruleset_dedup_against_base_rules();
     } catch (const std::exception &e) {
         std::cerr << "pr4_regression_test failed: " << e.what() << '\n';
         return 1;

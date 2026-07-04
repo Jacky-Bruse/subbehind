@@ -480,6 +480,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                         singleproxy["grpc-opts"]["grpc-service-name"] = x.Path;
                         break;
                     default:
+                        writeLog(0, "Skipping VMess node '" + x.Remark + "': unsupported network '" +
+                                    x.TransferProtocol + "'", LOG_LEVEL_WARNING);
                         continue;
                 }
                 break;
@@ -656,7 +658,6 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
             case ProxyType::Hysteria2:
                 singleproxy["type"] = "hysteria2";
                 singleproxy["password"] = x.Password;
-                singleproxy["auth"] = x.Password;
                 if (!x.CaStr.empty()) {
                     singleproxy["ca-str"] = x.CaStr;
                 } else if (!x.PublicKey.empty()) {
@@ -679,9 +680,9 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["obfs-password"] = x.OBFSPassword;
                 if (!x.Ports.empty())
                     singleproxy["ports"] = x.Ports;
-                // 新增 mihomo 参数输出
-                if (!x.Mport.empty())
-                    singleproxy["mport"] = x.Mport;
+                // mport 非 mihomo 字段：端口跳跃由上方 ports 输出，此处仅在 ports 缺省时补为合法 ports
+                if (x.Ports.empty() && !x.Mport.empty())
+                    singleproxy["ports"] = x.Mport;
                 if (!x.Fingerprint.empty())
                     singleproxy["fingerprint"] = x.Fingerprint;
                 if (!x.Ca.empty())
@@ -750,7 +751,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!udp.is_undef()) {
                     singleproxy["udp"] = udp.get();
                 }
-                if (!x.ServerName.empty()) {
+                if (!x.SNI.empty()) {
                     singleproxy["sni"] = x.SNI;
                 }
                 if (!scv.is_undef())
@@ -760,6 +761,13 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                         singleproxy["alpn"].push_back(item);
                     }
                 }
+                // idle-session 三字段：仅在非 mihomo 默认值时输出，避免噪音
+                if (x.IdleSessionCheckInterval != 30)
+                    singleproxy["idle-session-check-interval"] = x.IdleSessionCheckInterval;
+                if (x.IdleSessionTimeout != 30)
+                    singleproxy["idle-session-timeout"] = x.IdleSessionTimeout;
+                if (x.MinIdleSession > 0)
+                    singleproxy["min-idle-session"] = x.MinIdleSession;
                 break;
             case ProxyType::Mieru:
                 singleproxy["type"] = "mieru";
@@ -812,17 +820,16 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.ServerName.empty())
                     singleproxy["servername"] = x.ServerName;
                 if (!x.ShortId.empty()) {
-                    singleproxy["reality-opts"]["short-id"] = "" + x.ShortId;
+                    singleproxy["reality-opts"]["short-id"] = x.ShortId;
                 }
-                // 客户端指纹
-                if (!x.PublicKey.empty() && !x.ShortId.empty()) {
-                    if (!x.ClientFingerprint.empty()) {
-                        singleproxy["client-fingerprint"] = x.ClientFingerprint;
-                    } else if (!x.Fingerprint.empty()) {
-                        singleproxy["client-fingerprint"] = x.Fingerprint;
-                    } else {
-                        singleproxy["client-fingerprint"] = "random";
-                    }
+                // 客户端指纹（uTLS）：显式设置时始终输出（含非 Reality 的普通 TLS 节点）；
+                // Reality 节点（有 public-key）即使未显式设置也需默认 random，否则 mihomo uTLS 无法握手。
+                if (!x.ClientFingerprint.empty()) {
+                    singleproxy["client-fingerprint"] = x.ClientFingerprint;
+                } else if (!x.Fingerprint.empty()) {
+                    singleproxy["client-fingerprint"] = x.Fingerprint;
+                } else if (!x.PublicKey.empty()) {
+                    singleproxy["client-fingerprint"] = "random";
                 }
                 // 新增 mihomo 参数输出
                 if (!x.IpVersion.empty()) {
@@ -942,6 +949,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                         addXhttpDownloadToYaml(singleproxy["xhttp-opts"], x.XhttpDownload);
                         break;
                     default:
+                        writeLog(0, "Skipping VLESS node '" + x.Remark + "': unsupported network '" +
+                                    x.TransferProtocol + "'", LOG_LEVEL_WARNING);
                         continue;
                 }
                 break;
@@ -1057,8 +1066,16 @@ std::string formatterShortId(std::string input) {
     size_t startPos = input.find(target);
 
     while (startPos != std::string::npos) {
-        // 查找对应实例的结束位置
-        size_t endPos = input.find("}", startPos);
+        // 查找 short-id 值的结束边界：flow 风格到 ',' 或 '}'，block 风格到换行。
+        // 只找 '}' 会在 xhttp download-settings（short-id 后仍有 path/host 等键）
+        // 及 block 风格下越界，吞掉后续键值对导致输出损坏。
+        size_t valStart = startPos + target.length();
+        size_t endPos = std::string::npos;
+        for (char term : {',', '}', '\n'}) {
+            size_t p = input.find(term, valStart);
+            if (p < endPos)
+                endPos = p;
+        }
 
         if (endPos != std::string::npos) {
             // 提取原始id

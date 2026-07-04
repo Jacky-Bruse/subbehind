@@ -1425,7 +1425,7 @@ void explodeMierus(std::string mierus, Proxy &node) {
             explodeStdMieru("mierus://" + mierus, node);
         }
     } else if (strFind(mierus, "mieru://")) {
-        if (regMatch(mierus, "mierus://(.*?)@(.*)")) {
+        if (regMatch(mierus, "mieru://(.*?)@(.*)")) {
             explodeStdMieru(mierus.substr(8), node);
         } else {
             mierus = urlSafeBase64Decode(mierus.substr(8));
@@ -1435,7 +1435,6 @@ void explodeMierus(std::string mierus, Proxy &node) {
 }
 
 void explodeHysteria(std::string hysteria, Proxy &node) {
-    printf("explodeHysteria\n");
     hysteria = regReplace(hysteria, "(hysteria|hy)://", "hysteria://");
     if (regMatch(hysteria, "hysteria://(.*?)[:](.*)")) {
         explodeStdHysteria(hysteria, node);
@@ -2189,24 +2188,32 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                               tribool(), scv, reduceRtt, disableSni, request_timeout, underlying_proxy);
 
                 break;
-            case "anytls"_hash:
+            case "anytls"_hash: {
                 group = ANYTLS_DEFAULT_GROUP;
                 singleproxy["password"] >>= password;
                 singleproxy["sni"] >>= sni;
 
-                if (!singleproxy["alpn"].IsNull() && singleproxy["alpn"].size() >= 1) {
-                    singleproxy["alpn"][0] >>= alpn;
-                    alpns.push_back(alpn);
-                    if (singleproxy["alpn"].size() >= 2 && !singleproxy["alpn"][1].IsNull()) {
-                        singleproxy["alpn"][1] >>= alpn2;
-                        alpns.push_back(alpn2);
+                // 遍历全部 alpn 元素，原实现只取前两个会截断
+                if (!singleproxy["alpn"].IsNull()) {
+                    for (std::size_t ai = 0; ai < singleproxy["alpn"].size(); ai++) {
+                        if (!singleproxy["alpn"][ai].IsNull()) {
+                            std::string a;
+                            singleproxy["alpn"][ai] >>= a;
+                            alpns.push_back(a);
+                        }
                     }
                 }
-                singleproxy["fingerprint"] >>= fingerprint;
+                // mihomo AnyTLS 用 client-fingerprint（uTLS 指纹），非 fingerprint
+                singleproxy["client-fingerprint"] >>= fingerprint;
+                uint16_t idle_check = 30, idle_timeout = 30, min_idle = 0;
+                singleproxy["idle-session-check-interval"] >>= idle_check;
+                singleproxy["idle-session-timeout"] >>= idle_timeout;
+                singleproxy["min-idle-session"] >>= min_idle;
                 anyTlSConstruct(node, ANYTLS_DEFAULT_GROUP, ps, port, password, server, alpns, fingerprint, sni,
                                 udp,
-                                tribool(), scv, tribool(), underlying_proxy, 30, 30, 0);
+                                tribool(), scv, tribool(), underlying_proxy, idle_check, idle_timeout, min_idle);
                 break;
+            }
             case "mieru"_hash:
                 group = MIERU_DEFAULT_GROUP;
                 singleproxy["password"] >>= password;
@@ -2358,8 +2365,10 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
         hysteria2.erase(pos);
     }
 
+    // 端口段放宽为 [\d,\-]+ 以接受端口跳跃写法（host:40000-50000 或 host:443,40000-50000），
+    // 否则此类分享链接会解析失败被整体丢弃。
     if (strFind(hysteria2, "@")) {
-        if (regGetMatch(hysteria2, R"(^(.*?)@(.*)[:](\d+)$)", 4, 0, &password, &add, &port))
+        if (regGetMatch(hysteria2, R"(^(.*?)@(.*)[:]([\d,\-]+)$)", 4, 0, &password, &add, &port))
             return;
     } else {
         password = getUrlArg(addition, "password");
@@ -2369,9 +2378,11 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
         if (!strFind(hysteria2, ":"))
             return;
 
-        if (regGetMatch(hysteria2, R"(^(.*)[:](\d+)$)", 3, 0, &add, &port))
+        if (regGetMatch(hysteria2, R"(^(.*)[:]([\d,\-]+)$)", 3, 0, &add, &port))
             return;
     }
+    // 密码可能被 URL 编码（含特殊字符时），需解码还原
+    password = urlDecode(password);
 
     scv = getUrlArg(addition, "insecure");
     up = getUrlArg(addition, "up");
@@ -2382,6 +2393,12 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
     host = getUrlArg(addition, "sni");
     sni = getUrlArg(addition, "sni");
     ports = getUrlArg(addition, "ports");
+    // authority 中的端口段若为范围/列表，作为端口跳跃保留到 ports，基准端口取首个端口
+    if (port.find_first_of(",-") != std::string::npos) {
+        if (ports.empty())
+            ports = port;
+        port = port.substr(0, port.find_first_of(",-"));
+    }
     if (remarks.empty())
         remarks = add + ":" + port;
 
@@ -2420,7 +2437,12 @@ void explodeStdVless(std::string vless, Proxy &node) {
         case "ws"_hash:
         case "h2"_hash:
             type = getUrlArg(addition, "headerType");
-            host = getUrlArg(addition, strFind(addition, "sni") ? "sni" : "host");
+            // host 用作 WS/H2 的 Host 头，必须取 host 参数；
+            // TLS SNI 由下方 sni 变量单独提取，二者不可混用，
+            // 否则链接同时带 host= 和 sni= 时 Host 头会被 SNI 覆盖导致握手失败。
+            host = getUrlArg(addition, "host");
+            if (host.empty())
+                host = getUrlArg(addition, "sni");
             path = getUrlArg(addition, "path");
             break;
         case "xhttp"_hash: // 新增对 type=xhttp 的支持
@@ -4005,6 +4027,7 @@ void explodeSub(std::string sub, std::vector<Proxy> &nodes) {
         static const char *const directSchemes[] = {
             "vless://", "vmess://", "ss://", "ssr://", "trojan://", "trojan-go://",
             "hysteria://", "hy://", "hysteria2://", "hy2://", "tuic://", "anytls://",
+            "mieru://", "mierus://",
             "wg://", "wireguard://", "socks://", "socks5://", nullptr
         };
         bool isDirectLink = false;

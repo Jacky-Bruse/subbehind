@@ -213,12 +213,17 @@ void rulesetToClash(YAML::Node &base_rule, std::vector<RulesetContent> &ruleset_
     std::unordered_set<std::string> seenKeys; // 去重用的 seen set
 
     if(!overwrite_original_rules && base_rule[field_name].IsDefined())
+    {
         rules = base_rule[field_name];
+        // base 模板已有的规则须计入去重集合，否则拉取的同名规则会重复输出
+        for(size_t i = 0; i < rules.size(); i++)
+            seenKeys.insert(extractRuleKey(safe_as<std::string>(rules[i])));
+    }
 
     std::vector<std::string_view> temp(4);
     for(RulesetContent &x : ruleset_content_array)
     {
-        if(global.maxAllowedRules && total_rules > global.maxAllowedRules)
+        if(global.maxAllowedRules && total_rules >= global.maxAllowedRules)
             break;
         rule_group = x.rule_group;
         retrieved_rules = x.rule_content.get();
@@ -251,7 +256,7 @@ void rulesetToClash(YAML::Node &base_rule, std::vector<RulesetContent> &ruleset_
         std::string::size_type lineSize;
         while(getline(strStrm, strLine, delimiter))
         {
-            if(global.maxAllowedRules && total_rules > global.maxAllowedRules)
+            if(global.maxAllowedRules && total_rules >= global.maxAllowedRules)
                 break;
             strLine = trimWhitespace(strLine, true, true); //remove whitespaces
             lineSize = strLine.size();
@@ -296,14 +301,19 @@ std::string rulesetToClashStr(YAML::Node &base_rule, std::vector<RulesetContent>
     if(!overwrite_original_rules && base_rule[field_name].IsDefined())
     {
         for(size_t i = 0; i < base_rule[field_name].size(); i++)
-            output_content += "  - " + safe_as<std::string>(base_rule[field_name][i]) + "\n";
+        {
+            std::string baseRule = safe_as<std::string>(base_rule[field_name][i]);
+            output_content += "  - " + baseRule + "\n";
+            // base 模板已有的规则须计入去重集合，否则拉取的同名规则会重复输出
+            seenKeys.insert(extractRuleKey(baseRule));
+        }
     }
     base_rule.remove(field_name);
 
     string_view_array temp(4);
     for(RulesetContent &x : ruleset_content_array)
     {
-        if(global.maxAllowedRules && total_rules > global.maxAllowedRules)
+        if(global.maxAllowedRules && total_rules >= global.maxAllowedRules)
             break;
         rule_group = x.rule_group;
         retrieved_rules = x.rule_content.get();
@@ -336,7 +346,7 @@ std::string rulesetToClashStr(YAML::Node &base_rule, std::vector<RulesetContent>
         std::string::size_type lineSize;
         while(getline(strStrm, strLine, delimiter))
         {
-            if(global.maxAllowedRules && total_rules > global.maxAllowedRules)
+            if(global.maxAllowedRules && total_rules >= global.maxAllowedRules)
                 break;
             strLine = trimWhitespace(strLine, true, true); //remove whitespaces
             lineSize = strLine.size();
@@ -424,7 +434,7 @@ void rulesetToSurge(INIReader &base_rule, std::vector<RulesetContent> &ruleset_c
     string_view_array temp(4);
     for(RulesetContent &x : ruleset_content_array)
     {
-        if(global.maxAllowedRules && total_rules > global.maxAllowedRules)
+        if(global.maxAllowedRules && total_rules >= global.maxAllowedRules)
             break;
         rule_group = x.rule_group;
         rule_path = x.rule_path;
@@ -579,7 +589,7 @@ void rulesetToSurge(INIReader &base_rule, std::vector<RulesetContent> &ruleset_c
             std::string::size_type lineSize;
             while(getline(strStrm, strLine, delimiter))
             {
-                if(global.maxAllowedRules && total_rules > global.maxAllowedRules)
+                if(global.maxAllowedRules && total_rules >= global.maxAllowedRules)
                     break;
                 strLine = trimWhitespace(strLine, true, true);
                 lineSize = strLine.size();
@@ -725,7 +735,7 @@ void rulesetToSingBox(rapidjson::Document &base_rule, std::vector<RulesetContent
     std::vector<std::string_view> temp(4);
     for(RulesetContent &x : ruleset_content_array)
     {
-        if(global.maxAllowedRules && total_rules > global.maxAllowedRules)
+        if(global.maxAllowedRules && total_rules >= global.maxAllowedRules)
             break;
         rule_group = x.rule_group;
         retrieved_rules = x.rule_content.get();
@@ -757,7 +767,7 @@ void rulesetToSingBox(rapidjson::Document &base_rule, std::vector<RulesetContent
 
         while(getline(strStrm, strLine, delimiter))
         {
-            if(global.maxAllowedRules && total_rules > global.maxAllowedRules)
+            if(global.maxAllowedRules && total_rules >= global.maxAllowedRules)
                 break;
             strLine = trimWhitespace(strLine, true, true); //remove whitespaces
             lineSize = strLine.size();
