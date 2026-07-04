@@ -2205,10 +2205,15 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 }
                 // mihomo AnyTLS 用 client-fingerprint（uTLS 指纹），非 fingerprint
                 singleproxy["client-fingerprint"] >>= fingerprint;
+                // 缺省键须保留 mihomo 默认值(30/30/0)；不能直接 >>=，
+                // 因为 safe_as 对未定义键返回 0，会把默认值覆盖成 0
                 uint16_t idle_check = 30, idle_timeout = 30, min_idle = 0;
-                singleproxy["idle-session-check-interval"] >>= idle_check;
-                singleproxy["idle-session-timeout"] >>= idle_timeout;
-                singleproxy["min-idle-session"] >>= min_idle;
+                if (singleproxy["idle-session-check-interval"].IsDefined() && !singleproxy["idle-session-check-interval"].IsNull())
+                    idle_check = safe_as<uint16_t>(singleproxy["idle-session-check-interval"]);
+                if (singleproxy["idle-session-timeout"].IsDefined() && !singleproxy["idle-session-timeout"].IsNull())
+                    idle_timeout = safe_as<uint16_t>(singleproxy["idle-session-timeout"]);
+                if (singleproxy["min-idle-session"].IsDefined() && !singleproxy["min-idle-session"].IsNull())
+                    min_idle = safe_as<uint16_t>(singleproxy["min-idle-session"]);
                 anyTlSConstruct(node, ANYTLS_DEFAULT_GROUP, ps, port, password, server, alpns, fingerprint, sni,
                                 udp,
                                 tribool(), scv, tribool(), underlying_proxy, idle_check, idle_timeout, min_idle);

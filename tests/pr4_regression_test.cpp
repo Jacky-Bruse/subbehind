@@ -875,7 +875,8 @@ void test_vless_link_ws_host_and_sni_distinct() {
     require(node.TransferProtocol == "ws", "expected ws transport");
     require(node.Host == "ws-host.example.com",
             "WS Host header must come from host=, not sni=");
-    require(node.SNI == "tls-sni.example.com", "SNI must come from sni=");
+    // VLESS 链接的 sni 存入 ServerName（vlessConstruct 的映射）
+    require(node.ServerName == "tls-sni.example.com", "SNI must come from sni=");
 }
 
 // P1-3: 非 Reality 节点若链接带 fp，client-fingerprint 需输出；Reality 无 short-id 仍需默认 random
