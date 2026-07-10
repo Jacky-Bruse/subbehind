@@ -3421,8 +3421,26 @@ void explodeSub(std::string sub, std::vector<Proxy> &nodes) {
     }
 
     try {
-        if (!processed && regFind(sub, "\"?(Proxy|proxies)\"?:")) {
+        const std::string trimmed_sub = trimWhitespace(sub, true, false);
+        const bool may_be_clash = regFind(sub, "\"?(Proxy|proxies)\"?:") ||
+                                  startsWith(trimmed_sub, "-") || startsWith(trimmed_sub, "[");
+        if (!processed && may_be_clash) {
             Node yamlnode = Load(sub);
+            if (yamlnode.IsSequence() && yamlnode.size()) {
+                bool is_proxy_sequence = true;
+                for (std::size_t i = 0; i < yamlnode.size(); ++i) {
+                    const Node item = yamlnode[i];
+                    if (!item.IsMap() || !item["type"].IsScalar()) {
+                        is_proxy_sequence = false;
+                        break;
+                    }
+                }
+                if (is_proxy_sequence) {
+                    Node normalized;
+                    normalized["proxies"] = yamlnode;
+                    yamlnode = normalized;
+                }
+            }
             if (yamlnode.IsDefined() && yamlnode.IsMap()) {
                 const std::string section = yamlnode["proxies"].IsDefined() ? "proxies" : "Proxy";
                 if (yamlnode[section].IsDefined() && yamlnode[section].IsSequence()) {
