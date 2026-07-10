@@ -3379,20 +3379,21 @@ void explodeSub(std::string sub, std::vector<Proxy> &nodes) {
         processed = true;
     }
 
-    //try to parse as clash configuration
     try {
         if (!processed && regFind(sub, "\"?(Proxy|proxies)\"?:")) {
-            regGetMatch(sub, R"(^(?:Proxy|proxies):$\s(?:(?:^ +?.*$| *?-.*$|)\s?)+)", 1, &sub);
             Node yamlnode = Load(sub);
-            if (yamlnode.size() && (yamlnode["Proxy"].IsDefined() || yamlnode["proxies"].IsDefined())) {
-                explodeClash(yamlnode, nodes);
-                processed = true;
+            if (yamlnode.IsDefined() && yamlnode.IsMap()) {
+                const std::string section = yamlnode["proxies"].IsDefined() ? "proxies" : "Proxy";
+                if (yamlnode[section].IsDefined() && yamlnode[section].IsSequence()) {
+                    const auto node_count = nodes.size();
+                    explodeClash(yamlnode, nodes);
+                    processed = nodes.size() > node_count;
+                }
             }
         }
     } catch (std::exception &e) {
         //writeLog(0, e.what(), LOG_LEVEL_DEBUG);
         //ignore
-        throw;
     }
     try {
         std::string pattern = "\"?(inbounds)\"?:";
