@@ -3438,7 +3438,7 @@ void explodeSub(std::string sub, std::vector<Proxy> &nodes) {
                 if (is_proxy_sequence) {
                     Node normalized;
                     normalized["proxies"] = yamlnode;
-                    yamlnode = normalized;
+                    yamlnode.reset(normalized);
                 }
             }
             if (yamlnode.IsDefined() && yamlnode.IsMap()) {
