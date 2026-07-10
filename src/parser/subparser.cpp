@@ -60,6 +60,49 @@ const string_array xhttp_option_keys = {
     "sc-stream-up-server-secs"
 };
 
+static std::string readClashTuicAlpn(const Node &singleproxy, const std::string &proxy_name) {
+    const Node alpn_node = singleproxy["alpn"];
+    if (!alpn_node.IsDefined() || alpn_node.IsNull())
+        return "";
+
+    const auto warn = [&proxy_name](const std::string &reason) {
+        const std::string name = proxy_name.empty() ? "" : " for proxy '" + proxy_name + "'";
+        writeLog(0, "Ignoring invalid Clash TUIC alpn" + name + ": " + reason, LOG_LEVEL_WARNING);
+    };
+    const auto read_scalar = [&warn](const Node &value) {
+        try {
+            return trim(value.as<std::string>());
+        } catch (const YAML::Exception &e) {
+            warn(e.what());
+            return std::string();
+        }
+    };
+
+    if (alpn_node.IsScalar())
+        return read_scalar(alpn_node);
+
+    if (alpn_node.IsSequence()) {
+        string_array values;
+        for (std::size_t i = 0; i < alpn_node.size(); ++i) {
+            const Node value = alpn_node[i];
+            if (!value.IsDefined() || value.IsNull())
+                continue;
+            if (!value.IsScalar()) {
+                warn("sequence item " + std::to_string(i) + " is not a scalar");
+                continue;
+            }
+
+            std::string item = read_scalar(value);
+            if (!item.empty())
+                values.emplace_back(std::move(item));
+        }
+        return join(values, ",");
+    }
+
+    warn("expected a scalar or sequence");
+    return "";
+}
+
 //remake from speedtestutil
 std::string removeBrackets(const std::string& input) {
     std::string result = input;
@@ -1622,9 +1665,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 singleproxy["congestion-controller"] >>= congestion_control;
                 singleproxy["udp-relay-mode"] >>= udp_relay_mode;
                 singleproxy["sni"] >>= sni;
-                if (!singleproxy["alpn"].IsNull()) {
-                    singleproxy["alpn"][0] >>= alpn;
-                }
+                alpn = readClashTuicAlpn(singleproxy, ps);
                 singleproxy["disable-sni"] >>= disableSni;
                 singleproxy["reduce-rtt"] >>= reduceRtt;
                 singleproxy["token"] >>= token;
