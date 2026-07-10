@@ -805,6 +805,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
         }
         if (!x.DisableUdp.is_undef())
             singlegroup["disable-udp"] = x.DisableUdp.get();
+        for (const auto &[key, value] : x.Extras)
+            singlegroup[key] = yamlScalarFromString(value);
 
         for (const auto &y: x.Proxies)
             groupGenerate(y, nodelist, filtered_nodelist, true, ext);

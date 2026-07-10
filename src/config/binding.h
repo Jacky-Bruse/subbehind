@@ -84,6 +84,12 @@ namespace toml
                 throw serialization_error(format_error("Proxy Group must contains at least one of proxy match rule or provider!", v.location(), "here"), v.location());
             if(v.contains("disable-udp"))
                 conf.DisableUdp = find_or(v, "disable-udp", conf.DisableUdp.get());
+            if(v.contains("extra"))
+            {
+                const auto& extra_table = toml::find<toml::table>(v, "extra");
+                for(const auto& [k, val] : extra_table)
+                    conf.Extras[k] = toml::format(val);
+            }
             return conf;
         }
     };
@@ -237,6 +243,17 @@ namespace INIBinding
                     continue;
                 }
 
+                while(rules_upper_bound > 2 && startsWith(vArray[rules_upper_bound - 1], "!!"))
+                {
+                    std::string keyval = vArray[rules_upper_bound - 1].substr(2);
+                    auto eqpos = keyval.find('=');
+                    if(eqpos != std::string::npos)
+                        conf.Extras[keyval.substr(0, eqpos)] = keyval.substr(eqpos + 1);
+                    else
+                        conf.Extras[keyval] = "true";
+                    rules_upper_bound--;
+                }
+
                 if(conf.Type == ProxyGroupType::URLTest || conf.Type == ProxyGroupType::LoadBalance || conf.Type == ProxyGroupType::Fallback)
                 {
                     if(rules_upper_bound < 5)
@@ -253,6 +270,15 @@ namespace INIBinding
                         string_array list = split(vArray[i].substr(11), ",");
                         conf.UsingProvider.reserve(conf.UsingProvider.size() + list.size());
                         std::move(list.begin(), list.end(), std::back_inserter(conf.UsingProvider));
+                    }
+                    else if(startsWith(vArray[i], "!!"))
+                    {
+                        std::string keyval = vArray[i].substr(2);
+                        auto eqpos = keyval.find('=');
+                        if(eqpos != std::string::npos)
+                            conf.Extras[keyval.substr(0, eqpos)] = keyval.substr(eqpos + 1);
+                        else
+                            conf.Extras[keyval] = "true";
                     }
                     else
                         conf.Proxies.emplace_back(std::move(vArray[i]));
