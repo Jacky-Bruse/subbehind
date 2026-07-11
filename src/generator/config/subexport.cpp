@@ -46,6 +46,34 @@ bool isNumeric(const std::string &str) {
     return true;
 }
 
+bool isIntegerString(const std::string &str) {
+    if (str.empty())
+        return false;
+
+    size_t start = str[0] == '-' ? 1 : 0;
+    if (start == str.size())
+        return false;
+
+    for (size_t i = start; i < str.size(); i++) {
+        if (!std::isdigit(static_cast<unsigned char>(str[i])))
+            return false;
+    }
+    return true;
+}
+
+YAML::Node yamlScalarFromString(const std::string &value) {
+    YAML::Node node;
+    if (value == "true")
+        node = true;
+    else if (value == "false")
+        node = false;
+    else if (isIntegerString(value))
+        node = to_int(value);
+    else
+        node = value;
+    return node;
+}
+
 std::string
 vmessLinkConstruct(const std::string &remarks, const std::string &add, const std::string &port, const std::string &type,
                    const std::string &id, const std::string &aid, const std::string &net, const std::string &path,

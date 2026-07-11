@@ -86,7 +86,7 @@ namespace toml
                 conf.DisableUdp = find_or(v, "disable-udp", conf.DisableUdp.get());
             if(v.contains("extra"))
             {
-                const auto& extra_table = toml::find<toml::table>(v, "extra");
+                const auto extra_table = toml::find<toml::table>(v, "extra");
                 for(const auto& [k, val] : extra_table)
                 {
                     if(val.is_string())
