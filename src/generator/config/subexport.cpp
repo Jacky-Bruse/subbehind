@@ -46,6 +46,34 @@ bool isNumeric(const std::string &str) {
     return true;
 }
 
+bool isIntegerString(const std::string &str) {
+    if (str.empty())
+        return false;
+
+    size_t start = str[0] == '-' ? 1 : 0;
+    if (start == str.size())
+        return false;
+
+    for (size_t i = start; i < str.size(); i++) {
+        if (!std::isdigit(static_cast<unsigned char>(str[i])))
+            return false;
+    }
+    return true;
+}
+
+YAML::Node yamlScalarFromString(const std::string &value) {
+    YAML::Node node;
+    if (value == "true")
+        node = true;
+    else if (value == "false")
+        node = false;
+    else if (isIntegerString(value))
+        node = to_int(value);
+    else
+        node = value;
+    return node;
+}
+
 std::string
 vmessLinkConstruct(const std::string &remarks, const std::string &add, const std::string &port, const std::string &type,
                    const std::string &id, const std::string &aid, const std::string &net, const std::string &path,
@@ -1023,6 +1051,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
         }
         if (!x.DisableUdp.is_undef())
             singlegroup["disable-udp"] = x.DisableUdp.get();
+        for (const auto &[key, value] : x.Extras)
+            singlegroup[key] = yamlScalarFromString(value);
 
         for (const auto &y: x.Proxies)
             groupGenerate(y, nodelist, filtered_nodelist, true, ext);
@@ -2065,7 +2095,7 @@ void proxyToQuanX(std::vector<Proxy> &nodes, INIReader &ini, std::vector<Ruleset
         std::string &hostname = x.Hostname, &method = x.EncryptMethod, &id = x.UserId, &transproto = x.TransferProtocol,
                 &host = x.Host, &path = x.Path, &password = x.Password, &plugin = x.Plugin, &pluginopts = x.PluginOption
                 , &protocol = x.Protocol, &protoparam = x.ProtocolParam, &obfs = x.OBFS, &obfsparam = x.OBFSParam, &
-                        username = x.Username;
+                        username = x.Username, &sni = x.ServerName, &publickey = x.PublicKey, &shortid = x.ShortId, &flow = x.Flow;
         std::string port = std::to_string(x.Port);
         bool &tlssecure = x.TLSSecure;
 
@@ -2101,23 +2131,55 @@ void proxyToQuanX(std::vector<Proxy> &nodes, INIReader &ini, std::vector<Ruleset
                     writeLog(0, "Skipping xhttp node for unsupported target: Quantumult X", LOG_LEVEL_WARNING);
                     continue;
                 }
-                if (method == "auto")
-                    method = "none";
-                else
-                    method = "none";
+                method = "none";
                 proxyStr = "vless = " + hostname + ":" + port + ", method=" + method + ", password=" + id;
-                if (x.AlterId != 0)
-                    proxyStr += ", aead=false";
                 if (tlssecure && !tls13.is_undef())
                     proxyStr += ", tls13=" + std::string(tls13 ? "true" : "false");
                 if (transproto == "ws") {
-                    if (tlssecure)
-                        proxyStr += ", obfs=wss";
-                    else
-                        proxyStr += ", obfs=ws";
-                    proxyStr += ", obfs-host=" + host + ", obfs-uri=" + path;
-                } else if (tlssecure)
-                    proxyStr += ", obfs=over-tls, obfs-host=" + host;
+                    proxyStr += tlssecure ? ", obfs=wss" : ", obfs=ws";
+
+                    if (tlssecure && !publickey.empty() && sni.empty())
+                        writeLog(0, "Quantumult X vless reality: public key present but SNI missing; skipping reality output.", LOG_LEVEL_WARNING);
+                    if (tlssecure && !shortid.empty() && publickey.empty())
+                        writeLog(0, "Quantumult X vless reality: shortid present but public key missing; skipping reality output.", LOG_LEVEL_WARNING);
+
+                    if (tlssecure && !publickey.empty() && !sni.empty())
+                        proxyStr += ", obfs-host=" + sni;
+                    else if (!host.empty())
+                        proxyStr += ", obfs-host=" + host;
+                    if (!path.empty())
+                        proxyStr += ", obfs-uri=" + path;
+                    if (tlssecure && !publickey.empty() && !sni.empty()) {
+                        proxyStr += ", reality-base64-pubkey=" + publickey;
+                        if (!shortid.empty())
+                            proxyStr += ", reality-hex-shortid=" + shortid;
+                    }
+                } else if (transproto == "http") {
+                    proxyStr += ", obfs=http";
+                    if (!host.empty())
+                        proxyStr += ", obfs-host=" + host;
+                    if (!path.empty())
+                        proxyStr += ", obfs-uri=" + path;
+                } else if (tlssecure) {
+                    proxyStr += ", obfs=over-tls";
+
+                    if (!publickey.empty() && sni.empty())
+                        writeLog(0, "Quantumult X vless reality: public key present but SNI missing; skipping reality output.", LOG_LEVEL_WARNING);
+                    if (!shortid.empty() && publickey.empty())
+                        writeLog(0, "Quantumult X vless reality: shortid present but public key missing; skipping reality output.", LOG_LEVEL_WARNING);
+
+                    if (!publickey.empty() && !sni.empty()) {
+                        proxyStr += ", obfs-host=" + sni;
+                        proxyStr += ", reality-base64-pubkey=" + publickey;
+                        if (!shortid.empty())
+                            proxyStr += ", reality-hex-shortid=" + shortid;
+                        if (!flow.empty())
+                            proxyStr += ", vless-flow=" + flow;
+                    } else if (!sni.empty())
+                        proxyStr += ", obfs-host=" + sni;
+                    else if (!host.empty())
+                        proxyStr += ", obfs-host=" + host;
+                }
                 break;
             case ProxyType::Shadowsocks:
                 proxyStr =

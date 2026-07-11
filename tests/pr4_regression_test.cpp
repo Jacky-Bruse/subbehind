@@ -1,14 +1,17 @@
 #include <exception>
 #include <future>
 #include <iostream>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <vector>
 
 #include <yaml-cpp/yaml.h>
 
+#include "config/binding.h"
 #include "generator/config/subexport.h"
 #include "generator/config/ruleconvert.h"
+#include "generator/template/templates.h"
 #include "parser/subparser.h"
 #include "utils/base64/base64.h"
 
@@ -816,6 +819,144 @@ void test_quanx_export_skips_vless_xhttp_node() {
             "expected QuanX export to avoid misleading over-tls fallback");
 }
 
+void test_proxy_group_toml_extras_preserve_scalar_types() {
+    std::istringstream input(R"(
+[[custom_groups]]
+name = "Proxy"
+type = "select"
+rule = ["[]DIRECT"]
+extra = { icon = "https://example.com/icon.png", hidden = true, threshold = 7 }
+)");
+    const toml::value root = toml::parse(input, "proxy-group-regression.toml");
+    const auto values = toml::find<std::vector<toml::value>>(root, "custom_groups");
+    const ProxyGroupConfigs groups = toml::get<ProxyGroupConfigs>(toml::value(values));
+
+    std::vector<Proxy> nodes;
+    YAML::Node output;
+    extra_settings ext;
+    ext.clash_new_field_name = true;
+    proxyToClash(nodes, output, groups, false, ext);
+
+    const YAML::Node group = output["proxy-groups"][0];
+    require(group["icon"].as<std::string>() == "https://example.com/icon.png",
+            "TOML string extra must not retain serialization quotes");
+    require(group["hidden"].as<bool>(), "TOML boolean extra must remain boolean");
+    require(group["threshold"].as<int>() == 7, "TOML integer extra must remain integer");
+}
+
+void test_proxy_group_trailing_provider_is_not_treated_as_extra() {
+    const ProxyGroupConfigs groups = INIBinding::from<ProxyGroupConfig>::from_ini({
+        "Provider`select`!!PROVIDER=one,two"
+    });
+
+    require(groups.size() == 1, "expected one proxy group");
+    require(groups[0].UsingProvider == StrArray({"one", "two"}),
+            "trailing !!PROVIDER must remain provider syntax");
+}
+
+void test_ruleset_format_is_parsed_and_validated() {
+    std::istringstream valid_input(R"(
+[[rulesets]]
+group = "Proxy"
+ruleset = "https://example.com/domains.txt"
+type = "clash-domain"
+format = "text"
+)");
+    const toml::value valid_root = toml::parse(valid_input, "ruleset-format.toml");
+    const auto values = toml::find<std::vector<toml::value>>(valid_root, "rulesets");
+    const RulesetConfigs rulesets = toml::get<RulesetConfigs>(toml::value(values));
+    require(rulesets.size() == 1 && rulesets[0].Format == "text",
+            "explicit rule-provider format must be preserved");
+
+    RulesetContent text_ruleset;
+    text_ruleset.rule_group = "Proxy";
+    text_ruleset.rule_path = "https://example.com/domains.txt";
+    text_ruleset.rule_path_typed = "clash-domain:https://example.com/domains.txt";
+    text_ruleset.rule_format = "text";
+    text_ruleset.rule_type = RULESET_CLASH_DOMAIN;
+
+    RulesetContent mrs_ruleset;
+    mrs_ruleset.rule_group = "Proxy";
+    mrs_ruleset.rule_path = "https://example.com/ips.mrs";
+    mrs_ruleset.rule_path_typed = "clash-ipcidr:https://example.com/ips.mrs";
+    mrs_ruleset.rule_format = "mrs";
+    mrs_ruleset.rule_type = RULESET_CLASH_IPCIDR;
+
+    YAML::Node output;
+    std::vector<RulesetContent> contents{text_ruleset, mrs_ruleset};
+    renderClashScript(output, contents, "", false, true, true);
+    const std::string rendered = YAML::Dump(output);
+    require(rendered.find("format: text") != std::string::npos,
+            "text rule-provider format must be emitted");
+    require(rendered.find("format: mrs") != std::string::npos,
+            "MRS rule-provider format must be emitted");
+
+    std::istringstream invalid_input(R"(
+[[rulesets]]
+group = "Proxy"
+ruleset = "https://example.com/classical.mrs"
+type = "clash-classic"
+format = "mrs"
+)");
+    bool rejected = false;
+    try {
+        const toml::value invalid_root = toml::parse(invalid_input, "invalid-ruleset-format.toml");
+        const auto invalid_values = toml::find<std::vector<toml::value>>(invalid_root, "rulesets");
+        (void) toml::get<RulesetConfigs>(toml::value(invalid_values));
+    } catch (const toml::serialization_error &) {
+        rejected = true;
+    }
+    require(rejected, "MRS format must be rejected for classical rule providers");
+}
+
+void test_quanx_export_preserves_vless_reality() {
+    std::vector<Proxy> nodes;
+    explodeSub(
+        "vless://12345678-1234-1234-1234-123456789012@reality.example.com:443"
+        "?security=reality&type=tcp&sni=apple.com&pbk=public-key&sid=01234567"
+        "&flow=xtls-rprx-vision#quanx-reality",
+        nodes);
+    require(nodes.size() == 1, "expected one VLESS Reality node");
+
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    const std::string exported = proxyToQuanX(nodes, "", rulesets, groups, ext);
+    require(exported.find("reality-base64-pubkey=public-key") != std::string::npos,
+            "QuanX export must preserve Reality public key");
+    require(exported.find("reality-hex-shortid=01234567") != std::string::npos,
+            "QuanX export must preserve Reality short id");
+    require(exported.find("vless-flow=xtls-rprx-vision") != std::string::npos,
+            "QuanX export must preserve VLESS flow");
+}
+
+void test_quanx_export_preserves_vless_wss_reality() {
+    std::vector<Proxy> nodes;
+    explodeSub(
+        "vless://12345678-1234-1234-1234-123456789012@reality.example.com:443"
+        "?security=reality&type=ws&host=cdn.example.com&path=%2Fws&sni=apple.com"
+        "&pbk=public-key&sid=01234567#quanx-wss-reality",
+        nodes);
+    require(nodes.size() == 1, "expected one VLESS WSS Reality node");
+
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    const std::string exported = proxyToQuanX(nodes, "", rulesets, groups, ext);
+    require(exported.find("obfs=wss") != std::string::npos,
+            "QuanX WSS Reality export must preserve WSS transport");
+    require(exported.find("obfs-host=apple.com") != std::string::npos,
+            "QuanX WSS Reality export must use SNI as Reality host");
+    require(exported.find("obfs-uri=/ws") != std::string::npos,
+            "QuanX WSS Reality export must preserve websocket path");
+    require(exported.find("reality-base64-pubkey=public-key") != std::string::npos,
+            "QuanX WSS Reality export must preserve public key");
+    require(exported.find("reality-hex-shortid=01234567") != std::string::npos,
+            "QuanX WSS Reality export must preserve short id");
+}
+
 // P1-1: formatterShortId 不得越界吞掉 download-settings 中 short-id 之后的键
 void test_formatter_short_id_preserves_xhttp_download_settings() {
     const std::string content = R"(proxies:
@@ -1056,6 +1197,11 @@ int main() {
         test_xray_download_settings_xmux_and_sc_max();
         test_clash_vless_xhttp_download_settings_full();
         test_quanx_export_skips_vless_xhttp_node();
+        test_proxy_group_toml_extras_preserve_scalar_types();
+        test_proxy_group_trailing_provider_is_not_treated_as_extra();
+        test_ruleset_format_is_parsed_and_validated();
+        test_quanx_export_preserves_vless_reality();
+        test_quanx_export_preserves_vless_wss_reality();
         test_clash_vless_xhttp_reuse_settings_h_keep_alive_period();
         test_clash_vless_xhttp_sc_max_range_passthrough();
         test_clash_vless_grpc_new_opts();
