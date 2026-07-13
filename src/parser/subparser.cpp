@@ -999,12 +999,33 @@ void explodeSS(std::string ss, Proxy &node) {
         group = getUrlArg(addition, "group");
         if (!group.empty())
             group = urlSafeBase64Decode(group);
+        // 3x-ui 等 Xray 面板的 ss 链接用 xray 风格 query(type=ws) 携带传输层，
+        // 线上格式与 SIP003 v2ray-plugin(websocket) 等价，映射后 mihomo/sing-box 可用
+        if (plugin.empty() && getUrlArg(addition, "type") == "ws") {
+            plugin = "v2ray-plugin";
+            pluginopts = "mode=websocket";
+            if (getUrlArg(addition, "security") == "tls")
+                pluginopts += ";tls";
+            std::string wshost = urlDecode(getUrlArg(addition, "host"));
+            if (wshost.empty())
+                wshost = urlDecode(getUrlArg(addition, "sni"));
+            std::string wspath = urlDecode(getUrlArg(addition, "path"));
+            if (!wshost.empty())
+                pluginopts += ";host=" + wshost;
+            if (!wspath.empty())
+                pluginopts += ";path=" + wspath;
+        }
         ss.erase(ss.find('?'));
     }
     if (strFind(ss, "@")) {
         if (regGetMatch(ss, "(\\S+?)@(\\S+):(\\d+)", 4, 0, &secret, &server, &port))
             return;
-        if (regGetMatch(urlSafeBase64Decode(secret), "(\\S+?):(\\S+)", 3, 0, &method, &password))
+        // SIP002: AEAD-2022 套件的 userinfo 是百分号编码的明文 "method:password"，不是 base64；
+        // 明文解码后必含 ':'，而 base64 字母表不含 ':'，以此区分两种形式
+        std::string userinfo = urlDecode(secret);
+        if (!strFind(userinfo, ":"))
+            userinfo = urlSafeBase64Decode(userinfo);
+        if (regGetMatch(userinfo, "(\\S+?):(\\S+)", 3, 0, &method, &password))
             return;
     } else {
         if (regGetMatch(urlSafeBase64Decode(ss), "(\\S+?):(\\S+)@(\\S+):(\\d+)", 5, 0, &method, &password, &server,
