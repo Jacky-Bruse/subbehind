@@ -1426,10 +1426,12 @@ void explodeTrojan(std::string trojan, Proxy &node) {
     if (group.empty())
         group = TROJAN_DEFAULT_GROUP;
     std::vector<std::string> alpnList = getUrlAlpnList(addition);
-    trojanConstruct(node, group, remark, server, port, psk, network, host, path, fp, sni, alpnList, true, tribool(),
-                    tfo, scv);
+    // xray 允许 trojan 走明文传输(security=none)；参数缺省时按惯例视为 TLS
+    std::string security = getUrlArg(addition, "security");
+    trojanConstruct(node, group, remark, server, port, psk, network, host, path, fp, sni, alpnList,
+                    security != "none", tribool(), tfo, scv);
     // v2rayN/3x-ui 风格 Reality: security=reality&pbk=&sid=（复用 VLESS 同名承载字段）
-    if (getUrlArg(addition, "security") == "reality") {
+    if (security == "reality") {
         node.PublicKey = urlDecode(getUrlArg(addition, "pbk"));
         node.ShortId = getUrlArg(addition, "sid");
     }

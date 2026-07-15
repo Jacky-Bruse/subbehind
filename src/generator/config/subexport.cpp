@@ -569,6 +569,13 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["skip-cert-verify"] = scv.get();
                 break;
             case ProxyType::Trojan:
+                // mihomo 的 trojan 强制 TLS，明文(security=none)节点无法表达，
+                // 输出会成为必超时的假可用节点，跳过并留日志
+                if (!x.TLSSecure) {
+                    writeLog(0, "Skipping Trojan node '" + x.Remark + "': mihomo requires TLS for trojan",
+                             LOG_LEVEL_WARNING);
+                    continue;
+                }
                 singleproxy["type"] = "trojan";
                 singleproxy["password"] = x.Password;
                 if (!x.ServerName.empty())
@@ -1760,11 +1767,16 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                     proxyStr += "&security=reality&pbk=" + urlEncode(pbk);
                     if (!sid.empty())
                         proxyStr += "&sid=" + urlEncode(sid);
+                } else if (!tlssecure) {
+                    proxyStr += "&security=none";
                 }
                 if (transproto == "ws") {
-                    proxyStr += "&ws=1";
+                    // 同时输出旧式(ws=1&wspath)与 v2rayN 式(type=ws&path&host)参数以兼容两类客户端
+                    proxyStr += "&ws=1&type=ws";
                     if (!path.empty())
-                        proxyStr += "&wspath=" + urlEncode(path);
+                        proxyStr += "&wspath=" + urlEncode(path) + "&path=" + urlEncode(path);
+                    if (!host.empty())
+                        proxyStr += "&host=" + urlEncode(host);
                 } else if (transproto == "grpc" && !path.empty()) {
                     proxyStr += "&type=grpc&serviceName=" + urlEncode(path);
                 }
