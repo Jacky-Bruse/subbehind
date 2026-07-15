@@ -587,9 +587,18 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 }
                 if (!scv.is_undef())
                     singleproxy["skip-cert-verify"] = scv.get();
+                // Reality（与 VLESS 同承载字段）；Reality 节点指纹缺省需回退 random，
+                // 否则 mihomo uTLS 无法握手
+                if (!x.PublicKey.empty()) {
+                    singleproxy["reality-opts"]["public-key"] = x.PublicKey;
+                    if (!x.ShortId.empty())
+                        singleproxy["reality-opts"]["short-id"] = x.ShortId;
+                }
                 // 新增 mihomo 参数输出
                 if (!x.ClientFingerprint.empty())
                     singleproxy["client-fingerprint"] = x.ClientFingerprint;
+                else if (!x.PublicKey.empty())
+                    singleproxy["client-fingerprint"] = "random";
                 if (!x.IpVersion.empty())
                     singleproxy["ip-version"] = x.IpVersion;
                 if (!x.TrojanSsMethod.empty()) {
@@ -1745,10 +1754,19 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                 } else if (!host.empty()) {
                     proxyStr += "&sni=" + host;
                 }
+                if (!fp.empty())
+                    proxyStr += "&fp=" + urlEncode(fp);
+                if (!pbk.empty()) {
+                    proxyStr += "&security=reality&pbk=" + urlEncode(pbk);
+                    if (!sid.empty())
+                        proxyStr += "&sid=" + urlEncode(sid);
+                }
                 if (transproto == "ws") {
                     proxyStr += "&ws=1";
                     if (!path.empty())
                         proxyStr += "&wspath=" + urlEncode(path);
+                } else if (transproto == "grpc" && !path.empty()) {
+                    proxyStr += "&type=grpc&serviceName=" + urlEncode(path);
                 }
                 proxyStr += "#" + urlEncode(remark);
                 break;
@@ -3337,7 +3355,7 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json,
                 tls.AddMember("alpn", alpns, allocator);
             }
             tls.AddMember("insecure", buildBooleanValue(scv), allocator);
-            if (x.Type == ProxyType::VLESS) {
+            if (x.Type == ProxyType::VLESS || x.Type == ProxyType::Trojan) {
                 rapidjson::Value reality(rapidjson::kObjectType);
                 if (!x.PublicKey.empty() || !x.ShortId.empty()) {
                     rapidjson::Value utls(rapidjson::kObjectType);

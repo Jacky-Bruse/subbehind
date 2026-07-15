@@ -1428,6 +1428,11 @@ void explodeTrojan(std::string trojan, Proxy &node) {
     std::vector<std::string> alpnList = getUrlAlpnList(addition);
     trojanConstruct(node, group, remark, server, port, psk, network, host, path, fp, sni, alpnList, true, tribool(),
                     tfo, scv);
+    // v2rayN/3x-ui 风格 Reality: security=reality&pbk=&sid=（复用 VLESS 同名承载字段）
+    if (getUrlArg(addition, "security") == "reality") {
+        node.PublicKey = urlDecode(getUrlArg(addition, "pbk"));
+        node.ShortId = getUrlArg(addition, "sid");
+    }
 }
 
 void explodeVless(std::string vless, Proxy &node) {
@@ -1782,8 +1787,17 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                     singleproxy["ws-opts"]["headers"]["Host"] >>= pluginopts_host;
                     if (pluginopts_host.empty())
                         singleproxy["ws-opts"]["headers"]["host"] >>= pluginopts_host;
-                } else
+                } else {
+                    // xhttp/grpc 等 xray 传输在目标内核的 ss 上无法表达，
+                    // 静默输出裸 TCP 节点必然连不上，跳过并留日志
+                    std::string ssnet = safe_as<std::string>(singleproxy["network"]);
+                    if (!ssnet.empty() && ssnet != "tcp") {
+                        writeLog(0, "Skipping SS node '" + ps + "': unsupported network '" + ssnet + "'",
+                                 LOG_LEVEL_WARNING);
+                        continue;
+                    }
                     plugin.clear();
+                }
 
                 switch (hash_(plugin)) {
                     case "simple-obfs"_hash:
@@ -1810,8 +1824,15 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                     std::transform(cipher.begin(), cipher.end(), cipher.begin(), ::tolower);
                 }
 
-                ssConstruct(node, group, ps, server, port, password, cipher, plugin, pluginopts, udp, tfo, scv,
-                            tribool(), underlying_proxy);
+                {
+                    // mihomo: udp-over-tcp(-version) 透传（Sub-Store 等会携带）
+                    tribool udp_over_tcp = safe_as<std::string>(singleproxy["udp-over-tcp"]);
+                    uint32_t uot_version = 0;
+                    if (singleproxy["udp-over-tcp-version"].IsDefined())
+                        uot_version = safe_as<uint32_t>(singleproxy["udp-over-tcp-version"]);
+                    ssConstruct(node, group, ps, server, port, password, cipher, plugin, pluginopts, udp, tfo, scv,
+                                tribool(), underlying_proxy, udp_over_tcp, uot_version);
+                }
                 break;
             case "socks5"_hash:
                 group = SOCKS_DEFAULT_GROUP;
@@ -1819,7 +1840,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 singleproxy["username"] >>= user;
                 singleproxy["password"] >>= password;
 
-                socksConstruct(node, group, ps, server, port, user, password, tribool(), tribool(), tribool(),
+                socksConstruct(node, group, ps, server, port, user, password, udp, tfo, scv,
                                underlying_proxy);
                 break;
             case "ssr"_hash:
@@ -1857,6 +1878,9 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 singleproxy["password"] >>= password;
                 singleproxy["sni"] >>= host;
                 singleproxy["sni"] >>= sni;
+                // client-fingerprint 以配置为准，缺省留空（fp 变量默认值 chrome 仅用于 vless）
+                fp.clear();
+                singleproxy["client-fingerprint"] >>= fp;
                 singleproxy["network"] >>= net;
                 switch (hash_(net)) {
                     case "grpc"_hash:
@@ -1864,6 +1888,11 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         break;
                     case "ws"_hash:
                         singleproxy["ws-opts"]["path"] >>= path;
+                        // CDN 场景 ws Host 头可能与 SNI 不同；未定义时保留 sni 回退值
+                        if (singleproxy["ws-opts"]["headers"]["Host"].IsDefined())
+                            singleproxy["ws-opts"]["headers"]["Host"] >>= host;
+                        else if (singleproxy["ws-opts"]["headers"]["host"].IsDefined())
+                            singleproxy["ws-opts"]["headers"]["host"] >>= host;
                         break;
                     default:
                         net = "tcp";
@@ -1874,6 +1903,12 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
 
                 trojanConstruct(node, group, ps, server, port, password, net, host, path, fp, sni, alpnList, true, udp,
                                 tfo, scv, tribool(), underlying_proxy);
+                if (singleproxy["reality-opts"].IsDefined()) {
+                    singleproxy["reality-opts"]["public-key"] >>= pbk;
+                    singleproxy["reality-opts"]["short-id"] >>= sid;
+                    node.PublicKey = pbk;
+                    node.ShortId = sid;
+                }
                 break;
             case "snell"_hash:
                 group = SNELL_DEFAULT_GROUP;
@@ -2101,7 +2136,8 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 singleproxy["sni"] >> host;
                 singleproxy["alpn"][0] >> alpn;
                 singleproxy["alpn"] >> alpnList;
-                singleproxy["protocol"] >> insecure;
+                // 原实现误把 protocol 字段读进 insecure；导出侧以 "1" 为真值
+                insecure = safe_as<bool>(singleproxy["insecure"]) ? "1" : "";
                 singleproxy["ports"] >> ports;
                 sni = host;
                 {
