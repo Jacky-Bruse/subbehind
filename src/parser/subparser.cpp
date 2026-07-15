@@ -1769,6 +1769,19 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                     plugin = "obfs-local";
                     singleproxy["obfs"] >>= pluginopts_mode;
                     singleproxy["obfs-host"] >>= pluginopts_host;
+                } else if (safe_as<std::string>(singleproxy["network"]) == "ws") {
+                    // Sub-Store 等会给 ss 透传 xray 风格的 network/ws-opts（mihomo 无此字段），
+                    // 线上格式与 SIP003 v2ray-plugin(websocket) 等价，按插件映射
+                    plugin = "v2ray-plugin";
+                    pluginopts_mode = "websocket";
+                    tls = safe_as<bool>(singleproxy["tls"]) ? "tls;" : "";
+                    path.clear();
+                    pluginopts_host.clear();
+                    pluginopts_mux.clear();
+                    singleproxy["ws-opts"]["path"] >>= path;
+                    singleproxy["ws-opts"]["headers"]["Host"] >>= pluginopts_host;
+                    if (pluginopts_host.empty())
+                        singleproxy["ws-opts"]["headers"]["host"] >>= pluginopts_host;
                 } else
                     plugin.clear();
 
