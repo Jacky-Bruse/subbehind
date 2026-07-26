@@ -1,4 +1,5 @@
 #include <exception>
+#include <fstream>
 #include <future>
 #include <iostream>
 #include <sstream>
@@ -1175,6 +1176,63 @@ void test_ruleset_dedup_against_base_rules() {
             "non-duplicate fetched rule must still be exported");
 }
 
+std::string render_all_base_clash(const string_map &globals) {
+    std::ifstream file(std::string(TEST_SOURCE_DIR) + "/base/base/all_base.tpl", std::ios::binary);
+    require(file.is_open(), "cannot open base/base/all_base.tpl");
+    std::ostringstream buffer;
+    buffer << file.rdbuf();
+
+    template_args args;
+    args.global_vars = globals;
+    args.request_params["target"] = "clash";
+    args.local_vars["clash.new_field_name"] = "true";
+
+    std::string output;
+    require(render_template(buffer.str(), args, output, "") == 0, "all_base.tpl render failed: " + output);
+    return output;
+}
+
+void test_all_base_clash_node_domain_omitted_when_empty() {
+    const std::string out = render_all_base_clash({{"clash.node_domain", ""}});
+    // 留空时整条不输出，而不是输出一个只剩前缀的 "+."
+    require(out.find("\"+.\"") == std::string::npos,
+            "empty node_domain must not emit a fake-ip-filter entry");
+}
+
+void test_all_base_clash_node_domain_emitted_when_set() {
+    const std::string out = render_all_base_clash({{"clash.node_domain", "example.com"}});
+    YAML::Node doc = YAML::Load(out);
+
+    bool found = false;
+    for (const auto &item : doc["dns"]["fake-ip-filter"])
+        found = found || item.as<std::string>() == "+.example.com";
+    require(found, "node_domain must be emitted as \"+.<domain>\" in fake-ip-filter");
+}
+
+void test_all_base_clash_secret_with_quote_keeps_yaml_valid() {
+    // 单引号是合法密码字符，早先的 secret: '{{ ... }}' 写法会让 YAML 解析失败
+    const std::string secret = "ab'cd\"ef\\gh";
+    const std::string out = render_all_base_clash({{"clash.secret", secret}});
+    YAML::Node doc = YAML::Load(out);
+
+    require(doc["secret"].as<std::string>() == secret, "secret must round-trip unchanged");
+}
+
+void test_all_base_clash_template_values_cannot_inject_yaml() {
+    // 值里同时含引号和换行时，早先的写法可以闭合标量并追加任意字段
+    const std::string secret = "x'\nmode: global\n#";
+    const std::string domain = "ex.com\"\n    - \"+.evil.com";
+    const std::string out = render_all_base_clash({{"clash.secret", secret}, {"clash.node_domain", domain}});
+    YAML::Node doc = YAML::Load(out);
+
+    require(doc["secret"].as<std::string>() == secret, "secret must round-trip unchanged");
+    require(doc["mode"].as<std::string>() == "rule", "secret must not be able to override mode");
+
+    for (const auto &item : doc["dns"]["fake-ip-filter"])
+        require(item.as<std::string>() != "+.evil.com",
+                "node_domain must not be able to inject extra fake-ip-filter entries");
+}
+
 } // namespace
 
 int main() {
@@ -1213,6 +1271,10 @@ int main() {
         test_anytls_clash_roundtrip_fields();
         test_hysteria2_export_omits_nonstandard_fields();
         test_ruleset_dedup_against_base_rules();
+        test_all_base_clash_node_domain_omitted_when_empty();
+        test_all_base_clash_node_domain_emitted_when_set();
+        test_all_base_clash_secret_with_quote_keeps_yaml_valid();
+        test_all_base_clash_template_values_cannot_inject_yaml();
     } catch (const std::exception &e) {
         std::cerr << "pr4_regression_test failed: " << e.what() << '\n';
         return 1;

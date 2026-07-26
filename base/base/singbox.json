@@ -42,7 +42,7 @@
                 "geosite": [
                     "category-ads-all"
                 ],
-                "server": "dns_block",
+                "server": "block",
                 "disable_cache": true
             },
             {

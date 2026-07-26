@@ -220,6 +220,21 @@ int render_template(const std::string &content, const template_args &vars, std::
     {
         return std::to_string(args.at(0)->get<int>());
     });
+    // 输出 YAML 兼容的双引号标量。YAML 1.2 双引号标量的转义集是 JSON 的超集，
+    // 故直接复用 nlohmann 的 dump()，避免手写转义漏掉反斜杠等字符。
+    // 变参：所有参数先拼接再整体加引号，便于在模板里拼前缀（如 yaml_quote("+.", domain)）。
+    // dump() 自带外层引号，模板中不要再手写引号。
+    env.add_callback("yaml_quote", -1, [](inja::Arguments &args)
+    {
+        std::string value;
+        for(auto iter = args.begin(); iter != args.end(); iter++)
+            value += (*iter)->is_string() ? (*iter)->get<std::string>() : (*iter)->dump();
+        // dump() 默认 ensure_ascii = false，中文等非 ASCII 原样输出，不转成 \uXXXX。
+        // 默认的 error_handler_t::strict 也是有意保留：pref 若被存成 GBK 等非 UTF-8 编码，
+        // 这里会抛 type_error.316 并被 render_template 捕获，报出确切的非法字节位置；
+        // 换成 replace 只会把非法字节替换成 U+FFFD，静默损坏 secret 这类凭据。
+        return nlohmann::json(value).dump();
+    });
 #ifndef NO_WEBGET
     env.add_callback("fetch", 1, template_webGet);
 #endif // NO_WEBGET

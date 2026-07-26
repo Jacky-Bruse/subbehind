@@ -7,7 +7,7 @@ mode: rule
 log-level: {{ default(global.clash.log_level, "info") }}
 # 默认绑回环，仅本机可访问控制面板。若改为对外监听，必须同时在 pref 里设置 clash.secret
 external-controller: {{ default(global.clash.external_controller, "127.0.0.1:9090") }}
-secret: '{{ default(global.clash.secret, "") }}'
+secret: {{ yaml_quote(default(global.clash.secret, "")) }}
 find-process-mode: strict # 进程模式 off / strict / always
 global-client-fingerprint: chrome
 tcp-concurrent: true # TCP 并发 如果域名解析结果对应多个IP,并发请求所有IP,选择握手最快的IP进行通讯
@@ -132,7 +132,7 @@ dns:
     # 重新丢回 DNS 解析，fake-ip 模式下会拿到 fake IP 造成环路/超时（mihomo issue #2740）。
     # 域名值放 pref 的 clash.node_domain，不写进公开仓库；未设置时本条不输出。
 {% if default(global.clash.node_domain, "") != "" %}
-    - "+.{{ global.clash.node_domain }}"
+    - {{ yaml_quote("+.", global.clash.node_domain) }}
 {% endif %}
 
     - "dns.google"
