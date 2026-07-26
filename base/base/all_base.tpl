@@ -1,18 +1,19 @@
 {% if request.target == "clash" or request.target == "clashr" %}
 port: {{ default(global.clash.http_port, "9890") }}
 socks-port: {{ default(global.clash.socks_port, "7891") }}
-mixed-port: 7893       # 混合端口（HTTP+SOCKS），兼容多端
+mixed-port: {{ default(global.clash.mixed_port, "7893") }}       # 混合端口（HTTP+SOCKS），兼容多端
 allow-lan: {{ default(global.clash.allow_lan, "true") }}
 mode: rule
 log-level: {{ default(global.clash.log_level, "info") }}
-external-controller: :9090
-secret: 'HJKD27LS1tkL!'
+# 默认绑回环，仅本机可访问控制面板。若改为对外监听，必须同时在 pref 里设置 clash.secret
+external-controller: {{ default(global.clash.external_controller, "127.0.0.1:9090") }}
+secret: '{{ default(global.clash.secret, "") }}'
 find-process-mode: strict # 进程模式 off / strict / always
 global-client-fingerprint: chrome
 tcp-concurrent: true # TCP 并发 如果域名解析结果对应多个IP,并发请求所有IP,选择握手最快的IP进行通讯
-keep-alive-interval: 30 # TCP Keep Alive 间隔,单位分钟 | 控制 Clash 发出 TCP Keep Alive 包的间隔,减少移动设备耗电问题的临时措施
+keep-alive-interval: 30 # TCP Keep Alive 间隔,单位秒 | 控制 Clash 发出 TCP Keep Alive 包的间隔,减少移动设备耗电问题的临时措施
 # ---- 内核优化参数 ----
-geodata-mode: false
+geodata-mode: true # true=用 geoip.dat(含全球国家码), false=用 mmdb
 geodata-loader: memconservative
 geo-auto-update: true
 geo-update-interval: 48
@@ -20,6 +21,7 @@ geo-update-interval: 48
 geox-url:
   geoip: https://fastly.jsdelivr.net/gh/MetaCubeX/meta-rules-dat@release/geoip.dat
   geosite: https://cdn.jsdelivr.net/gh/Jacky-Bruse/v2ray-rules-dat@release/geosite.dat
+  # geodata-mode: true 时用上面的 geoip.dat，本行 mmdb 不生效，仅作切回 false 时的备用
   mmdb: https://cdn.jsdelivr.net/gh/Hackl0us/GeoIP2-CN@release/Country.mmdb
 
 ipv6: true
@@ -53,6 +55,11 @@ sniffer:
     - accounts.google.com
     - oauth2.googleapis.com
     - play.googleapis.com
+  # override-destination: true 会用嗅探到的域名覆盖目标，以下长连接/私有协议必须跳过
+  skip-domain:
+    - "+.push.apple.com"       # Apple 推送（APNs），被覆盖会导致推送断连
+    - "Mijia Cloud"            # 米家设备私有协议，官方示例默认项
+    - "dlg.io.mi.com"          # 小米 IoT 长连接
 
 
 dns:
@@ -112,16 +119,21 @@ dns:
   
   # 优化后的 Filter
   fake-ip-filter:
-    - "*.openai.com"
+    # "+.openai.com" 已覆盖 *.openai.com / auth.openai.com / api.openai.com
+    - "+.openai.com"
+    - "api.openai.com.cdn.cloudflare.net"   # 后缀是 cloudflare.net，不被上一条覆盖
     - "*.chatgpt.com"
     - "*.oaiusercontent.com"
     - "*.oaistatic.com"
     - "*.openaiapi.com"
-    - "auth.openai.com"
     - "*.auth0.com"
-    - api.openai.com
-    - api.openai.com.cdn.cloudflare.net
-    - "+.openai.com"
+
+    # 自建节点域名：sniffer 的 override-destination 会丢弃原始目标 IP、把嗅探到的域名
+    # 重新丢回 DNS 解析，fake-ip 模式下会拿到 fake IP 造成环路/超时（mihomo issue #2740）。
+    # 域名值放 pref 的 clash.node_domain，不写进公开仓库；未设置时本条不输出。
+{% if default(global.clash.node_domain, "") != "" %}
+    - "+.{{ global.clash.node_domain }}"
+{% endif %}
 
     - "dns.google"
     - "geosite:fake-ip-filter"
@@ -507,7 +519,7 @@ enhanced-mode-by-rule = true
                 "geosite": [
                     "category-ads-all"
                 ],
-                "server": "dns_block",
+                "server": "block",
                 "disable_cache": true
             },
             {

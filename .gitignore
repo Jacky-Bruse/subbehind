@@ -1,4 +1,8 @@
 subconverter.exe
+# 运行时从 pref.example.* 拷贝生成，可能含密钥/自建域名，禁止提交
+/pref.toml
+/pref.yml
+/pref.ini
 .vscode
 cmake-build-debug
 .idea
