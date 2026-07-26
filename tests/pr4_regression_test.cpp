@@ -1200,6 +1200,21 @@ void test_vless_link_xhttp_reality_preserves_both() {
     require(node.TLSSecure, "security=reality implies TLS");
 }
 
+// 链接显式给出 host= 空值时，xhttp 的 Host 不得被 reality 的伪装 sni 顶替
+void test_vless_link_xhttp_empty_host_falls_back_to_server() {
+    const std::string content =
+        "vless://12345678-1234-1234-1234-123456789012@real.example.com:24218"
+        "?security=reality&type=xhttp&pbk=pubkey-link&sid=d3e7"
+        "&sni=masquerade.example.com&host=&path=%2Fhttp&mode=auto"
+        "#xhttp-empty-host";
+
+    const Proxy node = parse_link(content);
+    require(node.TransferProtocol == "xhttp", "expected xhttp transport");
+    require(node.ServerName == "masquerade.example.com", "sni must still become the reality server name");
+    require(node.Host == "real.example.com",
+            "empty host= must fall back to the server address, not the reality sni");
+}
+
 void test_singbox_vless_xhttp_reality_preserves_both() {
     const std::string content = R"({
   "inbounds": [],
@@ -1344,6 +1359,7 @@ int main() {
         test_hysteria2_export_omits_nonstandard_fields();
         test_ruleset_dedup_against_base_rules();
         test_vless_link_xhttp_reality_preserves_both();
+        test_vless_link_xhttp_empty_host_falls_back_to_server();
         test_singbox_vless_xhttp_reality_preserves_both();
         test_all_base_clash_node_domain_omitted_when_empty();
         test_all_base_clash_node_domain_emitted_when_set();
