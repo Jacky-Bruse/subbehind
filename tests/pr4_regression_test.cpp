@@ -1200,8 +1200,11 @@ void test_vless_link_xhttp_reality_preserves_both() {
     require(node.TLSSecure, "security=reality implies TLS");
 }
 
-// 链接显式给出 host= 空值时，xhttp 的 Host 不得被 reality 的伪装 sni 顶替
-void test_vless_link_xhttp_empty_host_falls_back_to_server() {
+// 空 host= 时 xhttp 的 Host 必须回退到 sni，与 Xray/mihomo 自身的回退顺序一致：
+// Xray  splithttp/dialer.go: Host → tls.ServerName → reality.ServerName → 目标地址
+// mihomo adapter/outbound/vless.go: XHTTPOpts.Host → ServerName → Server
+// 落到服务器地址会跳过 SNI 这一级，Host 头与原生客户端不符。
+void test_vless_link_xhttp_empty_host_falls_back_to_sni() {
     const std::string content =
         "vless://12345678-1234-1234-1234-123456789012@real.example.com:24218"
         "?security=reality&type=xhttp&pbk=pubkey-link&sid=d3e7"
@@ -1211,8 +1214,8 @@ void test_vless_link_xhttp_empty_host_falls_back_to_server() {
     const Proxy node = parse_link(content);
     require(node.TransferProtocol == "xhttp", "expected xhttp transport");
     require(node.ServerName == "masquerade.example.com", "sni must still become the reality server name");
-    require(node.Host == "real.example.com",
-            "empty host= must fall back to the server address, not the reality sni");
+    require(node.Host == "masquerade.example.com",
+            "empty host= must fall back to the sni, matching Xray/mihomo's own fallback order");
 }
 
 void test_singbox_vless_xhttp_reality_preserves_both() {
@@ -1359,7 +1362,7 @@ int main() {
         test_hysteria2_export_omits_nonstandard_fields();
         test_ruleset_dedup_against_base_rules();
         test_vless_link_xhttp_reality_preserves_both();
-        test_vless_link_xhttp_empty_host_falls_back_to_server();
+        test_vless_link_xhttp_empty_host_falls_back_to_sni();
         test_singbox_vless_xhttp_reality_preserves_both();
         test_all_base_clash_node_domain_omitted_when_empty();
         test_all_base_clash_node_domain_emitted_when_set();

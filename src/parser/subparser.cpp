@@ -2523,10 +2523,14 @@ void explodeStdVless(std::string vless, Proxy &node) {
             path = getUrlArg(addition, "path");
             break;
         case "xhttp"_hash: // 新增对 type=xhttp 的支持
-            // 与 ws/h2 不同，xhttp 的空 host 不回退到 sni：Xray 的 xhttp 在 host 留空时
-            // 用拨号地址作 Host 头，而 reality 场景下 sni 是伪装域名，拿它当 Host 会与
-            // 服务端实际校验的值不符。留空交给 vlessConstruct 回退到服务器地址。
+            // 空 host 必须回退到 sni，不能直接落到服务器地址：Xray 的 xhttp 拨号按
+            // Host → tls.ServerName → reality.ServerName → 目标地址 依次回退
+            // (transport/internet/splithttp/dialer.go)，mihomo 的 XHTTPOpts.Host →
+            // ServerName → Server 与之一致。跳过 SNI 这一级会让 Host 头与服务端
+            // 从原生客户端看到的值不符。
             host = getUrlArg(addition, "host");
+            if (host.empty())
+                host = getUrlArg(addition, "sni");
             path = getUrlArg(addition, "path");
             xhttp_mode = getUrlArg(addition, "mode");
             xhttp_extra = getUrlArg(addition, "extra");
