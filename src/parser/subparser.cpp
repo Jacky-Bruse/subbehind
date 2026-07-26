@@ -3713,6 +3713,9 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                         if (rapidjson::Value reality = tlsObj["utls"].GetObject();
                             reality.HasMember("fingerprint") && reality["fingerprint"].IsString()) {
                             fingerprint = reality["fingerprint"].GetString();
+                            // vless / trojan 分支取的是 fp（默认 "chrome"），不是 fingerprint。
+                            // 只赋值 fingerprint 会让配置里的指纹被静默丢弃，仅 anytls 能读到。
+                            fp = fingerprint;
                         }
                     }
                 } else {

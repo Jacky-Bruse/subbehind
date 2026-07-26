@@ -1176,6 +1176,78 @@ void test_ruleset_dedup_against_base_rules() {
             "non-duplicate fetched rule must still be exported");
 }
 
+// xhttp + reality：reality 参数在 network 分支之外读取，两条信息必须同时存活。
+// Clash 方向已由 test_formatter_short_id_preserves_xhttp_download_settings 覆盖，
+// Xray JSON 方向由 test_v2ray_vless_xhttp_conf_preserves_transport 覆盖，此处补链接与 sing-box。
+void test_vless_link_xhttp_reality_preserves_both() {
+    const std::string content =
+        "vless://12345678-1234-1234-1234-123456789012@xhttp.example.com:443"
+        "?security=reality&type=xhttp&pbk=pubkey-link&sid=aabb1122&fp=firefox"
+        "&sni=reality.example.com&host=cdn.example.com&path=%2Fxhttp&mode=stream-up"
+        "#xhttp-reality-link";
+
+    const Proxy node = parse_link(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(node.TransferProtocol == "xhttp", "expected xhttp transport");
+    require(node.XhttpMode == "stream-up", "xhttp mode must survive alongside reality");
+    require(node.Path == "/xhttp", "xhttp path must survive alongside reality");
+    // host 是传输层 Host 头，sni 是 reality 握手域名，二者不可互相覆盖
+    require(node.Host == "cdn.example.com", "xhttp Host must come from host=, not sni=");
+    require(node.ServerName == "reality.example.com", "reality server name must come from sni=");
+    require(node.PublicKey == "pubkey-link", "reality public key must survive alongside xhttp");
+    require(node.ShortId == "aabb1122", "reality short id must survive alongside xhttp");
+    require(node.ClientFingerprint == "firefox", "reality fingerprint must survive alongside xhttp");
+    require(node.TLSSecure, "security=reality implies TLS");
+}
+
+void test_singbox_vless_xhttp_reality_preserves_both() {
+    const std::string content = R"({
+  "inbounds": [],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "xhttp-reality",
+      "server": "xhttp.example.com",
+      "server_port": 443,
+      "uuid": "12345678-1234-1234-1234-123456789012",
+      "tls": {
+        "enabled": true,
+        "server_name": "reality.example.com",
+        "utls": {
+          "enabled": true,
+          "fingerprint": "firefox"
+        },
+        "reality": {
+          "enabled": true,
+          "public_key": "pubkey-sb",
+          "short_id": "ccdd3344"
+        }
+      },
+      "transport": {
+        "type": "xhttp",
+        "host": "cdn.example.com",
+        "path": "/xhttp",
+        "mode": "packet-up"
+      }
+    }
+  ],
+  "route": {}
+})";
+
+    const Proxy node = parse_singbox(content);
+    require(node.Type == ProxyType::VLESS, "expected VLESS node");
+    require(node.TransferProtocol == "xhttp", "expected xhttp transport");
+    require(node.XhttpMode == "packet-up", "xhttp mode must survive alongside reality");
+    require(node.Path == "/xhttp", "xhttp path must survive alongside reality");
+    require(node.Host == "cdn.example.com", "xhttp Host must come from transport.host");
+    require(node.ServerName == "reality.example.com", "reality server name must come from tls.server_name");
+    require(node.PublicKey == "pubkey-sb", "reality public key must survive alongside xhttp");
+    require(node.ShortId == "ccdd3344", "reality short id must survive alongside xhttp");
+    require(node.TLSSecure, "tls.reality implies TLS");
+    require(node.ClientFingerprint == "firefox",
+            "tls.utls.fingerprint must reach the node, not be replaced by the \"chrome\" default");
+}
+
 std::string render_all_base_clash(const string_map &globals) {
     std::ifstream file(std::string(TEST_SOURCE_DIR) + "/base/base/all_base.tpl", std::ios::binary);
     require(file.is_open(), "cannot open base/base/all_base.tpl");
@@ -1271,6 +1343,8 @@ int main() {
         test_anytls_clash_roundtrip_fields();
         test_hysteria2_export_omits_nonstandard_fields();
         test_ruleset_dedup_against_base_rules();
+        test_vless_link_xhttp_reality_preserves_both();
+        test_singbox_vless_xhttp_reality_preserves_both();
         test_all_base_clash_node_domain_omitted_when_empty();
         test_all_base_clash_node_domain_emitted_when_set();
         test_all_base_clash_secret_with_quote_keeps_yaml_valid();
