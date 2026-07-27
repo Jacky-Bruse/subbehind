@@ -167,6 +167,30 @@ void test_clash_vless_xhttp_export_preserves_transport() {
     require(exported.find("mode: auto") != std::string::npos, "expected Clash export to emit xhttp mode");
 }
 
+void test_vless_xhttp_padding_link_mapping() {
+    const Proxy legacy = parse_link(
+        "vless://12345678-1234-1234-1234-123456789012@xhttp.example.com:443"
+        "?security=tls&type=xhttp&path=%2Fxhttp&x_padding_bytes=100-500#legacy-padding");
+    require(legacy.XhttpPaddingBytes == "100-500", "expected top-level x_padding_bytes to be mapped");
+
+    const Proxy extra = parse_link(
+        "vless://12345678-1234-1234-1234-123456789012@xhttp.example.com:443"
+        "?security=tls&type=xhttp&path=%2Fxhttp"
+        "&extra=%7B%22xPaddingBytes%22%3A%22200-600%22%7D#extra-padding");
+    require(extra.XhttpPaddingBytes == "200-600", "expected extra.xPaddingBytes to be mapped");
+
+    std::vector<Proxy> nodes{extra};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("x-padding-bytes: 200-600") != std::string::npos,
+            "expected Clash export to emit mapped x-padding-bytes");
+}
+
 void test_clash_vless_xhttp_parse_preserves_transport() {
     const std::string content = R"(proxies:
   - name: xhttp-node
@@ -1331,6 +1355,7 @@ int main() {
         test_clash_ss_mux_pluginopts_do_not_duplicate();
         test_clash_round_trip_preserves_dialer_proxy();
         test_clash_vless_xhttp_export_preserves_transport();
+        test_vless_xhttp_padding_link_mapping();
         test_clash_vless_xhttp_parse_preserves_transport();
         test_clash_vless_ws_reality_preserves_transport_host();
         test_clash_vless_h2_reality_preserves_transport_host();

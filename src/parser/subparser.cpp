@@ -324,6 +324,12 @@ static void assignXhttpFields(Proxy &node, const std::string &mode, const std::s
                               const std::string &download_settings) {
     node.XhttpMode = mode;
     node.XhttpExtra = extra;
+    if (!extra.empty()) {
+        rapidjson::Document d;
+        d.Parse(extra.data());
+        if (!d.HasParseError() && d.IsObject())
+            node.XhttpPaddingBytes = GetMember(d, "xPaddingBytes");
+    }
     node.XhttpDownloadSettings = download_settings;
     if (!download_settings.empty())
         node.XhttpDownload = xrayDownloadToMihomoJson(download_settings);
@@ -2487,7 +2493,7 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
 
 void explodeStdVless(std::string vless, Proxy &node) {
     std::string add, port, type, id, aid, net, flow, pbk, sid, fp, mode, path, host, tls, remarks, sni;
-    std::string xhttp_mode, xhttp_extra, xhttp_download_settings;
+    std::string xhttp_mode, xhttp_extra, xhttp_download_settings, xhttp_padding_bytes;
     std::string addition;
     vless = vless.substr(8);
     string_size pos;
@@ -2534,6 +2540,7 @@ void explodeStdVless(std::string vless, Proxy &node) {
             path = getUrlArg(addition, "path");
             xhttp_mode = getUrlArg(addition, "mode");
             xhttp_extra = getUrlArg(addition, "extra");
+            xhttp_padding_bytes = urlDecode(getUrlArg(addition, "x_padding_bytes"));
             xhttp_download_settings = getUrlArg(addition, "downloadSettings");
             if (!xhttp_extra.empty())
                 xhttp_extra = urlDecode(xhttp_extra);
@@ -2559,8 +2566,11 @@ void explodeStdVless(std::string vless, Proxy &node) {
     vlessConstruct(node, XRAY_DEFAULT_GROUP, remarks, add, port, type, id, aid, net, "auto", flow, mode, path, host, "",
                    tls, pbk, sid, fp, sni, alpnList, packet_encoding, tribool(), tribool(), tribool(),
                    tribool(), "", tribool(), encryption);
-    if (net == "xhttp")
+    if (net == "xhttp") {
         assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings);
+        if (node.XhttpPaddingBytes.empty())
+            node.XhttpPaddingBytes = xhttp_padding_bytes;
+    }
     return;
 }
 
