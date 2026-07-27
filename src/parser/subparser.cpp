@@ -327,8 +327,9 @@ static void assignXhttpFields(Proxy &node, const std::string &mode, const std::s
     if (!extra.empty()) {
         rapidjson::Document d;
         d.Parse(extra.data());
+        // 用三参数重载：键缺失时 GetMember 返回空串，直接赋值会清掉调用方已设的值
         if (!d.HasParseError() && d.IsObject())
-            node.XhttpPaddingBytes = GetMember(d, "xPaddingBytes");
+            GetMember(d, "xPaddingBytes", node.XhttpPaddingBytes);
     }
     node.XhttpDownloadSettings = download_settings;
     if (!download_settings.empty())
