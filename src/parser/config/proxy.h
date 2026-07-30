@@ -11,6 +11,38 @@ using String = std::string;
 using StringArray = std::vector<String>;
 using StringMap = std::map<String, String>;
 
+// mihomo xhttp-opts 文档标量字段 ↔ Xray xhttp extra 键名映射
+// Xray 侧见 infra/conf/transport_method.go 的 SplitHTTPConfig；
+// Int32Range 字段（sessionIDLength 等）字符串形式即合法，无需转数值
+struct XhttpDocField
+{
+    const char *mihomo;
+    const char *xray;
+    bool isBool;
+};
+inline constexpr XhttpDocField XHTTP_DOC_FIELDS[] = {
+    {"x-padding-obfs-mode", "xPaddingObfsMode", true},
+    {"x-padding-key", "xPaddingKey", false},
+    {"x-padding-header", "xPaddingHeader", false},
+    {"x-padding-placement", "xPaddingPlacement", false},
+    {"x-padding-method", "xPaddingMethod", false},
+    {"uplink-http-method", "uplinkHTTPMethod", false},
+    {"session-placement", "sessionIDPlacement", false},
+    {"session-key", "sessionIDKey", false},
+    {"session-table", "sessionIDTable", false},
+    {"session-length", "sessionIDLength", false},
+    {"seq-placement", "seqPlacement", false},
+    {"seq-key", "seqKey", false},
+    {"uplink-data-placement", "uplinkDataPlacement", false},
+    {"uplink-data-key", "uplinkDataKey", false},
+    {"uplink-chunk-size", "uplinkChunkSize", false},
+    {"sc-min-posts-interval-ms", "scMinPostsIntervalMs", false},
+};
+
+// mihomo VlessOption 顶层 TLS 伪装层选项（download-settings 的 proxy 部分同样适用）
+inline constexpr const char *MIHOMO_TLS_OPT_KEYS[] = {
+    "ech-opts", "shadow-tls-opts", "restls-opts", "jls-opts"};
+
 enum class ProxyType
 {
     Unknown,
@@ -122,7 +154,9 @@ struct Proxy {
     String XhttpPaddingBytes;         // xhttp-opts.x-padding-bytes
     String XhttpScMaxEachPostBytes;   // xhttp-opts.sc-max-each-post-bytes
     String XhttpReuseSettings;        // JSON object for xhttp-opts.reuse-settings
+    String XhttpClashOpts;            // JSON object：文档其余 xhttp-opts 标量字段（键名同 mihomo 文档）
     String XhttpDownload;             // Mihomo canonical JSON for download-settings export
+    String MihomoTlsOpts;             // JSON object：name-cert-verify 及 ech/shadow-tls/restls/jls-opts 透传
 
     // ===== Basic Flags =====
     tribool UDP;

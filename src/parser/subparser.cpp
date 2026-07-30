@@ -70,6 +70,33 @@ static std::string getJsonMemberPreserve(const rapidjson::Value &value, const st
     return getCompactJsonString(value[member.data()]);
 }
 
+// Xray xmux 对象 → mihomo reuse-settings 对象（值统一为字符串，int 转字符串）
+static rapidjson::Value xmuxToReuseSettings(const rapidjson::Value &xm,
+                                            rapidjson::Document::AllocatorType &alloc) {
+    static const struct { const char *xray; const char *mihomo; } xmuxMap[] = {
+        {"maxConnections",  "max-connections"},
+        {"maxConcurrency",  "max-concurrency"},
+        {"cMaxReuseTimes",  "c-max-reuse-times"},
+        {"hMaxRequestTimes","h-max-request-times"},
+        {"hMaxReusableSecs","h-max-reusable-secs"},
+        {"hKeepAlivePeriod","h-keep-alive-period"},
+    };
+    rapidjson::Value rsObj(rapidjson::kObjectType);
+    for (const auto &f : xmuxMap) {
+        std::string v;
+        if (xm.HasMember(f.xray)) {
+            if (xm[f.xray].IsString())
+                v = xm[f.xray].GetString();
+            else if (xm[f.xray].IsInt64())
+                v = std::to_string(xm[f.xray].GetInt64());
+        }
+        if (!v.empty())
+            rsObj.AddMember(rapidjson::Value(f.mihomo, alloc),
+                            rapidjson::Value(v.c_str(), alloc), alloc);
+    }
+    return rsObj;
+}
+
 // Convert Xray downloadSettings JSON to Mihomo canonical JSON (Mihomo field names)
 static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
     if (xray_json.empty())
@@ -135,50 +162,13 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
             out.AddMember("host", rapidjson::Value(host.c_str(), alloc), alloc);
         if (xs.HasMember("headers") && xs["headers"].IsObject() && !xs["headers"].ObjectEmpty())
             out.AddMember("headers", rapidjson::Value(xs["headers"], alloc), alloc);
-        if (xs.HasMember("noGRPCHeader") && xs["noGRPCHeader"].IsBool())
-            out.AddMember("no-grpc-header", xs["noGRPCHeader"].GetBool(), alloc);
-        std::string padding = GetMember(xs, "xPaddingBytes");
-        if (!padding.empty())
-            out.AddMember("x-padding-bytes", rapidjson::Value(padding.c_str(), alloc), alloc);
-
-        // scMaxEachPostBytes → sc-max-each-post-bytes
-        if (xs.HasMember("scMaxEachPostBytes")) {
-            std::string v;
-            if (xs["scMaxEachPostBytes"].IsInt())
-                v = std::to_string(xs["scMaxEachPostBytes"].GetInt());
-            else if (xs["scMaxEachPostBytes"].IsString())
-                v = xs["scMaxEachPostBytes"].GetString();
-            if (!v.empty())
-                out.AddMember("sc-max-each-post-bytes", rapidjson::Value(v.c_str(), alloc), alloc);
-        }
+        // noGRPCHeader/xPaddingBytes/scMaxEachPostBytes 不落 canonical：
+        // mihomo 的 XHTTPDownloadSettings 没有这些字段，写出去也会被静默忽略
 
         // xmux → reuse-settings
         if (xs.HasMember("xmux") && xs["xmux"].IsObject()) {
-            const auto &xm = xs["xmux"];
-            rapidjson::Value rsObj(rapidjson::kObjectType);
-            bool hasReuse = false;
-            const struct { const char *xray; const char *mihomo; } xmuxMap[] = {
-                {"maxConnections",  "max-connections"},
-                {"maxConcurrency",  "max-concurrency"},
-                {"cMaxReuseTimes",  "c-max-reuse-times"},
-                {"hMaxRequestTimes","h-max-request-times"},
-                {"hMaxReusableSecs","h-max-reusable-secs"},
-            };
-            for (const auto &f : xmuxMap) {
-                std::string v;
-                if (xm.HasMember(f.xray)) {
-                    if (xm[f.xray].IsString())
-                        v = xm[f.xray].GetString();
-                    else if (xm[f.xray].IsInt())
-                        v = std::to_string(xm[f.xray].GetInt());
-                }
-                if (!v.empty()) {
-                    rsObj.AddMember(rapidjson::Value(f.mihomo, alloc),
-                                    rapidjson::Value(v.c_str(), alloc), alloc);
-                    hasReuse = true;
-                }
-            }
-            if (hasReuse)
+            rapidjson::Value rsObj = xmuxToReuseSettings(xs["xmux"], alloc);
+            if (!rsObj.ObjectEmpty())
                 out.AddMember("reuse-settings", rsObj, alloc);
         }
     }
@@ -192,6 +182,43 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
     return buf.GetString();
 }
 
+// 扁平 map 透传：标量按 true/false/整数/字符串启发式保型
+// ponytail: 只处理一层标量 map；ech/shadow-tls/restls/jls-opts 均为扁平结构，
+// 纯数字密码会被当成整数，mihomo 弱类型解码会转回字符串，无碍
+static rapidjson::Value yamlFlatMapToJson(const Node &node, rapidjson::Document::AllocatorType &alloc) {
+    rapidjson::Value obj(rapidjson::kObjectType);
+    for (const auto &kv : node) {
+        if (!kv.second.IsScalar())
+            continue;
+        std::string k = kv.first.as<std::string>();
+        std::string v = kv.second.as<std::string>();
+        rapidjson::Value key(k.c_str(), alloc);
+        if (v == "true" || v == "false")
+            obj.AddMember(key, v == "true", alloc);
+        else if (!v.empty() && v.size() < 10 && v.find_first_not_of("0123456789") == std::string::npos)
+            obj.AddMember(key, atoi(v.c_str()), alloc);
+        else
+            obj.AddMember(key, rapidjson::Value(v.c_str(), alloc), alloc);
+    }
+    return obj;
+}
+
+// name-cert-verify + ech/shadow-tls/restls/jls-opts → JSON object（主节点与 download-settings 共用）
+static void addMihomoTlsOpts(const Node &node, rapidjson::Document &out,
+                             rapidjson::Document::AllocatorType &alloc) {
+    std::string ncv;
+    node["name-cert-verify"] >>= ncv;
+    if (!ncv.empty())
+        out.AddMember("name-cert-verify", rapidjson::Value(ncv.c_str(), alloc), alloc);
+    for (const char *k : MIHOMO_TLS_OPT_KEYS) {
+        if (node[k].IsDefined() && node[k].IsMap()) {
+            rapidjson::Value sub = yamlFlatMapToJson(node[k], alloc);
+            if (!sub.ObjectEmpty())
+                out.AddMember(rapidjson::Value(k, alloc), sub, alloc);
+        }
+    }
+}
+
 // Convert Clash YAML download-settings node to Mihomo canonical JSON
 static std::string clashDownloadToMihomoJson(const Node &node) {
     if (!node.IsDefined() || !node.IsMap())
@@ -201,7 +228,7 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
     out.SetObject();
     auto &alloc = out.GetAllocator();
 
-    std::string server, servername, fingerprint, path, host, paddingBytes;
+    std::string server, servername, fingerprint, path, host;
     node["server"] >>= server;
     if (!server.empty())
         out.AddMember("server", rapidjson::Value(server.c_str(), alloc), alloc);
@@ -231,11 +258,15 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
     if (!fingerprint.empty())
         out.AddMember("client-fingerprint", rapidjson::Value(fingerprint.c_str(), alloc), alloc);
 
+    // mihomo 的 XHTTPDownloadSettings 里 reality 参数嵌套在 reality-opts 下
+    // （canonical JSON 内部仍保持平铺的 public-key/short-id）
     std::string pbk, sid;
-    node["public-key"] >>= pbk;
+    if (node["reality-opts"].IsDefined() && node["reality-opts"].IsMap()) {
+        node["reality-opts"]["public-key"] >>= pbk;
+        node["reality-opts"]["short-id"] >>= sid;
+    }
     if (!pbk.empty())
         out.AddMember("public-key", rapidjson::Value(pbk.c_str(), alloc), alloc);
-    node["short-id"] >>= sid;
     if (!sid.empty())
         out.AddMember("short-id", rapidjson::Value(sid.c_str(), alloc), alloc);
 
@@ -260,20 +291,8 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
             out.AddMember("headers", hdrs, alloc);
     }
 
-    if (node["no-grpc-header"].IsDefined()) {
-        bool noGrpc = safe_as<std::string>(node["no-grpc-header"]) == "true";
-        out.AddMember("no-grpc-header", noGrpc, alloc);
-    }
-
-    node["x-padding-bytes"] >>= paddingBytes;
-    if (!paddingBytes.empty())
-        out.AddMember("x-padding-bytes", rapidjson::Value(paddingBytes.c_str(), alloc), alloc);
-
-    std::string scMax;
-    if (node["sc-max-each-post-bytes"].IsDefined())
-        scMax = safe_as<std::string>(node["sc-max-each-post-bytes"]);
-    if (!scMax.empty())
-        out.AddMember("sc-max-each-post-bytes", rapidjson::Value(scMax.c_str(), alloc), alloc);
+    // no-grpc-header/x-padding-bytes/sc-max-each-post-bytes 不读取：
+    // mihomo 的 XHTTPDownloadSettings 没有这些字段
 
     if (node["reuse-settings"].IsDefined() && node["reuse-settings"].IsMap()) {
         rapidjson::Value rsObj(rapidjson::kObjectType);
@@ -297,6 +316,8 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
         bool scv = safe_as<std::string>(node["skip-cert-verify"]) == "true";
         out.AddMember("skip-cert-verify", scv, alloc);
     }
+
+    addMihomoTlsOpts(node, out, alloc);
 
     std::string tlsFingerprint;
     node["fingerprint"] >>= tlsFingerprint;
@@ -328,8 +349,53 @@ static void assignXhttpFields(Proxy &node, const std::string &mode, const std::s
         rapidjson::Document d;
         d.Parse(extra.data());
         // 用三参数重载：键缺失时 GetMember 返回空串，直接赋值会清掉调用方已设的值
-        if (!d.HasParseError() && d.IsObject())
+        if (!d.HasParseError() && d.IsObject()) {
             GetMember(d, "xPaddingBytes", node.XhttpPaddingBytes);
+            if (d.HasMember("noGRPCHeader") && d["noGRPCHeader"].IsBool())
+                node.XhttpNoGrpcHeader = d["noGRPCHeader"].GetBool();
+            // scMaxEachPostBytes / xmux → 顶层 sc-max-each-post-bytes / reuse-settings，
+            // 使 clash 导出不再依赖 extra 原样保留
+            if (d.HasMember("scMaxEachPostBytes")) {
+                if (d["scMaxEachPostBytes"].IsInt64())
+                    node.XhttpScMaxEachPostBytes = std::to_string(d["scMaxEachPostBytes"].GetInt64());
+                else if (d["scMaxEachPostBytes"].IsString() && d["scMaxEachPostBytes"].GetStringLength() > 0)
+                    node.XhttpScMaxEachPostBytes = d["scMaxEachPostBytes"].GetString();
+            }
+            if (d.HasMember("xmux") && d["xmux"].IsObject()) {
+                rapidjson::Document rs;
+                rs.SetObject();
+                rapidjson::Value rsObj = xmuxToReuseSettings(d["xmux"], rs.GetAllocator());
+                if (!rsObj.ObjectEmpty()) {
+                    rapidjson::StringBuffer rbuf;
+                    rapidjson::Writer<rapidjson::StringBuffer> rw(rbuf);
+                    rsObj.Accept(rw);
+                    node.XhttpReuseSettings = rbuf.GetString();
+                }
+            }
+            // Xray extra 驼峰字段 → clash 文档键（bool 保持布尔，数值转字符串）
+            rapidjson::Document co;
+            co.SetObject();
+            auto &ca = co.GetAllocator();
+            for (const auto &f : XHTTP_DOC_FIELDS) {
+                if (!d.HasMember(f.xray))
+                    continue;
+                const auto &v = d[f.xray];
+                if (f.isBool && v.IsBool())
+                    co.AddMember(rapidjson::Value(f.mihomo, ca), rapidjson::Value(v.GetBool()), ca);
+                else if (v.IsString() && v.GetStringLength() > 0)
+                    co.AddMember(rapidjson::Value(f.mihomo, ca),
+                                 rapidjson::Value(v.GetString(), ca), ca);
+                else if (v.IsInt64())
+                    co.AddMember(rapidjson::Value(f.mihomo, ca),
+                                 rapidjson::Value(std::to_string(v.GetInt64()).c_str(), ca), ca);
+            }
+            if (!co.ObjectEmpty()) {
+                rapidjson::StringBuffer cbuf;
+                rapidjson::Writer<rapidjson::StringBuffer> cw(cbuf);
+                co.Accept(cw);
+                node.XhttpClashOpts = cbuf.GetString();
+            }
+        }
     }
     node.XhttpDownloadSettings = download_settings;
     if (!download_settings.empty())
@@ -1668,7 +1734,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
         std::string fp = "chrome", pbk, sid, packet_encoding, encryption; //vless
         std::string plugin, pluginopts, pluginopts_mode, pluginopts_host, pluginopts_mux; //ss
         std::string protocol, protoparam, obfs, obfsparam; //ssr
-        std::string flow, mode, xhttp_mode, xhttp_headers_json, xhttp_padding_bytes, xhttp_clash_download, xhttp_sc_max_post, xhttp_reuse_json; //trojan/xhttp
+        std::string flow, mode, xhttp_mode, xhttp_headers_json, xhttp_padding_bytes, xhttp_clash_download, xhttp_sc_max_post, xhttp_reuse_json, xhttp_clash_opts; //trojan/xhttp
         uint32_t grpc_max_connections = 0, grpc_min_streams = 0, grpc_max_streams = 0;
         tribool xhttp_no_grpc_header;
         std::string user; //socks
@@ -2051,6 +2117,36 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         if (singleproxy["xhttp-opts"]["download-settings"].IsDefined())
                             xhttp_clash_download = clashDownloadToMihomoJson(
                                 singleproxy["xhttp-opts"]["download-settings"]);
+                        {
+                            // 文档其余标量字段原样透传，键名与 mihomo 文档逐一对应
+                            rapidjson::Document xoDoc;
+                            xoDoc.SetObject();
+                            auto &xa = xoDoc.GetAllocator();
+                            if (singleproxy["xhttp-opts"]["x-padding-obfs-mode"].IsDefined())
+                                xoDoc.AddMember("x-padding-obfs-mode",
+                                                safe_as<std::string>(
+                                                    singleproxy["xhttp-opts"]["x-padding-obfs-mode"]) == "true",
+                                                xa);
+                            static const char *docScalarKeys[] = {
+                                "x-padding-key", "x-padding-header", "x-padding-placement",
+                                "x-padding-method", "uplink-http-method", "session-placement",
+                                "session-key", "session-table", "session-length",
+                                "seq-placement", "seq-key", "uplink-data-placement",
+                                "uplink-data-key", "uplink-chunk-size", "sc-min-posts-interval-ms"};
+                            for (const char *k : docScalarKeys) {
+                                std::string val;
+                                singleproxy["xhttp-opts"][k] >>= val;
+                                if (!val.empty())
+                                    xoDoc.AddMember(rapidjson::Value(k, xa),
+                                                    rapidjson::Value(val.c_str(), xa), xa);
+                            }
+                            if (!xoDoc.ObjectEmpty()) {
+                                rapidjson::StringBuffer xbuf;
+                                rapidjson::Writer<rapidjson::StringBuffer> xw(xbuf);
+                                xoDoc.Accept(xw);
+                                xhttp_clash_opts = xbuf.GetString();
+                            }
+                        }
                         edge.clear();
                         break;
                     default:
@@ -2089,10 +2185,17 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                     if (singleproxy["authenticated-length"].IsDefined()) {
                         authenticated_length_flag = safe_as<std::string>(singleproxy["authenticated-length"]) == "true";
                     }
+                    // 顶层 ech/ech-config 是早期误写的键，保留读取以兼容旧输出
                     if (singleproxy["ech"].IsDefined()) {
                         ech_enable_flag = safe_as<std::string>(singleproxy["ech"]) == "true";
                     }
                     singleproxy["ech-config"] >>= ech_config;
+                    // mihomo 正式键：ech-opts{enable,config}，优先于旧键
+                    if (singleproxy["ech-opts"].IsDefined() && singleproxy["ech-opts"].IsMap()) {
+                        if (singleproxy["ech-opts"]["enable"].IsDefined())
+                            ech_enable_flag = safe_as<std::string>(singleproxy["ech-opts"]["enable"]) == "true";
+                        singleproxy["ech-opts"]["config"] >>= ech_config;
+                    }
                     if (singleproxy["ws-opts"].IsDefined()) {
                         if (singleproxy["ws-opts"]["max-early-data"].IsDefined()) {
                             ws_max_early_data = safe_as<uint32_t>(singleproxy["ws-opts"]["max-early-data"]);
@@ -2111,6 +2214,18 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                                    packet_addr_flag, global_padding_flag, authenticated_length_flag,
                                    ech_enable_flag, ech_config, ws_max_early_data, ws_early_data_header_name,
                                    v2ray_http_upgrade_fast_open_flag);
+                    {
+                        // TLS 伪装层选项透传（与传输层无关，所有 vless 节点适用）
+                        rapidjson::Document td;
+                        td.SetObject();
+                        addMihomoTlsOpts(singleproxy, td, td.GetAllocator());
+                        if (!td.ObjectEmpty()) {
+                            rapidjson::StringBuffer tbuf;
+                            rapidjson::Writer<rapidjson::StringBuffer> tw(tbuf);
+                            td.Accept(tw);
+                            node.MihomoTlsOpts = tbuf.GetString();
+                        }
+                    }
                     if (net == "xhttp") {
                         assignXhttpFields(node, xhttp_mode, "", "");
                         node.XhttpHeaders = xhttp_headers_json;
@@ -2119,6 +2234,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         node.XhttpPaddingBytes = xhttp_padding_bytes;
                         node.XhttpScMaxEachPostBytes = xhttp_sc_max_post;
                         node.XhttpReuseSettings = xhttp_reuse_json;
+                        node.XhttpClashOpts = xhttp_clash_opts;
                         if (!xhttp_clash_download.empty())
                             node.XhttpDownload = xhttp_clash_download;
                     }

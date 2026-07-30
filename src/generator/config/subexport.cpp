@@ -248,6 +248,31 @@ groupGenerate(const std::string &rule, std::vector<Proxy> &nodelist, string_arra
     }
 }
 
+// JSON object（标量成员）→ YAML map，保留 bool/int/string 类型
+static void jsonObjToYamlMap(const rapidjson::Value &obj, YAML::Node out) {
+    for (const auto &kv : obj.GetObject()) {
+        const char *k = kv.name.GetString();
+        if (kv.value.IsBool())
+            out[k] = kv.value.GetBool();
+        else if (kv.value.IsInt())
+            out[k] = kv.value.GetInt();
+        else if (kv.value.IsString())
+            out[k] = std::string(kv.value.GetString());
+    }
+}
+
+// name-cert-verify 与 ech/shadow-tls/restls/jls-opts 写回 YAML（主节点与 download-settings 共用）
+static void addMihomoTlsOptsToYaml(const rapidjson::Value &d, YAML::Node out) {
+    std::string ncv = GetMember(d, "name-cert-verify");
+    if (!ncv.empty())
+        out["name-cert-verify"] = ncv;
+    for (const char *k : MIHOMO_TLS_OPT_KEYS) {
+        // 注意传 out[k]：未绑定的空 Node 按值传入后赋值不会回传到父树
+        if (d.HasMember(k) && d[k].IsObject() && !d[k].ObjectEmpty())
+            jsonObjToYamlMap(d[k], out[k]);
+    }
+}
+
 // Export Mihomo canonical download JSON to xhttp-opts.download-settings YAML node
 static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_json) {
     if (download_json.empty())
@@ -275,12 +300,14 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
     std::string fp = GetMember(d, "client-fingerprint");
     if (!fp.empty())
         ds["client-fingerprint"] = fp;
+    // mihomo 的 XHTTPDownloadSettings 里 reality 参数嵌套在 reality-opts 下，
+    // 平铺写出会被 mihomo 解码器静默忽略，导致下行丢失 reality 配置
     std::string pbk = GetMember(d, "public-key");
     if (!pbk.empty())
-        ds["public-key"] = pbk;
+        ds["reality-opts"]["public-key"] = pbk;
     std::string sid = GetMember(d, "short-id");
     if (!sid.empty())
-        ds["short-id"] = sid;
+        ds["reality-opts"]["short-id"] = sid;
     std::string path = GetMember(d, "path");
     if (!path.empty())
         ds["path"] = path;
@@ -291,15 +318,8 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
         for (const auto &kv : d["headers"].GetObject())
             ds["headers"][kv.name.GetString()] = std::string(kv.value.GetString());
     }
-    if (d.HasMember("no-grpc-header") && d["no-grpc-header"].IsBool())
-        ds["no-grpc-header"] = d["no-grpc-header"].GetBool();
-    std::string padding = GetMember(d, "x-padding-bytes");
-    if (!padding.empty())
-        ds["x-padding-bytes"] = padding;
-
-    std::string scMax = GetMember(d, "sc-max-each-post-bytes");
-    if (!scMax.empty())
-        ds["sc-max-each-post-bytes"] = scMax;
+    // no-grpc-header/x-padding-bytes/sc-max-each-post-bytes 不写出：
+    // mihomo 的 XHTTPDownloadSettings 没有这些字段（旧 canonical JSON 里的残留一并忽略）
 
     if (d.HasMember("reuse-settings") && d["reuse-settings"].IsObject()) {
         const auto &rs = d["reuse-settings"];
@@ -328,6 +348,8 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
     std::string privateKey = GetMember(d, "private-key");
     if (!privateKey.empty())
         ds["private-key"] = privateKey;
+
+    addMihomoTlsOptsToYaml(d, ds);
 
     if (ds.IsDefined())
         opts["download-settings"] = ds;
@@ -888,11 +910,19 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.AuthenticatedLength.is_undef()) {
                     singleproxy["authenticated-length"] = x.AuthenticatedLength.get();
                 }
-                if (!x.EchEnable.is_undef()) {
-                    singleproxy["ech"] = x.EchEnable.get();
+                // mihomo 的 ECH 键是 ech-opts{enable,config}；顶层 ech/ech-config 是历史误写不再输出。
+                // ech-opts 已随 MihomoTlsOpts 透传时以其为准，避免重复写
+                if (x.MihomoTlsOpts.find("\"ech-opts\"") == std::string::npos) {
+                    if (!x.EchEnable.is_undef())
+                        singleproxy["ech-opts"]["enable"] = x.EchEnable.get();
+                    if (!x.EchConfig.empty())
+                        singleproxy["ech-opts"]["config"] = x.EchConfig;
                 }
-                if (!x.EchConfig.empty()) {
-                    singleproxy["ech-config"] = x.EchConfig;
+                if (!x.MihomoTlsOpts.empty()) {
+                    rapidjson::Document td;
+                    td.Parse(x.MihomoTlsOpts.data());
+                    if (!td.HasParseError() && td.IsObject())
+                        addMihomoTlsOptsToYaml(td, singleproxy);
                 }
                 switch (hash_(x.TransferProtocol)) {
                     case "tcp"_hash:
@@ -988,6 +1018,20 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                                 }
                                 if (rsYaml.IsDefined())
                                     singleproxy["xhttp-opts"]["reuse-settings"] = rsYaml;
+                            }
+                        }
+                        if (!x.XhttpClashOpts.empty()) {
+                            // 文档其余标量字段原样写回，布尔保持布尔、其余保持字符串
+                            rapidjson::Document od;
+                            od.Parse(x.XhttpClashOpts.data());
+                            if (!od.HasParseError() && od.IsObject()) {
+                                for (const auto &kv : od.GetObject()) {
+                                    if (kv.value.IsBool())
+                                        singleproxy["xhttp-opts"][kv.name.GetString()] = kv.value.GetBool();
+                                    else if (kv.value.IsString())
+                                        singleproxy["xhttp-opts"][kv.name.GetString()] =
+                                            std::string(kv.value.GetString());
+                                }
                             }
                         }
                         addXhttpDownloadToYaml(singleproxy["xhttp-opts"], x.XhttpDownload);
@@ -1691,7 +1735,8 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                 // For Clash-parsed nodes, synthesize extra from individual fields.
                                 std::string extraToExport = x.XhttpExtra;
                                 if (extraToExport.empty() &&
-                                    (!x.XhttpScMaxEachPostBytes.empty() || !x.XhttpReuseSettings.empty())) {
+                                    (!x.XhttpScMaxEachPostBytes.empty() || !x.XhttpReuseSettings.empty() ||
+                                     !x.XhttpClashOpts.empty() || !x.XhttpNoGrpcHeader.is_undef())) {
                                     rapidjson::Document ed;
                                     ed.SetObject();
                                     auto &ea = ed.GetAllocator();
@@ -1700,6 +1745,8 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                         if (scMax > 0)
                                             ed.AddMember("scMaxEachPostBytes", scMax, ea);
                                     }
+                                    if (!x.XhttpNoGrpcHeader.is_undef())
+                                        ed.AddMember("noGRPCHeader", x.XhttpNoGrpcHeader.get(), ea);
                                     if (!x.XhttpReuseSettings.empty()) {
                                         rapidjson::Document rd;
                                         rd.Parse(x.XhttpReuseSettings.data());
@@ -1722,8 +1769,36 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                                     hasXmux = true;
                                                 }
                                             }
+                                            // Xray XmuxConfig.HKeepAlivePeriod 是 int64，
+                                            // 无字符串反序列化，必须以数值写出
+                                            if (rd.HasMember("h-keep-alive-period") &&
+                                                rd["h-keep-alive-period"].IsString()) {
+                                                int hkap = atoi(rd["h-keep-alive-period"].GetString());
+                                                if (hkap != 0) {
+                                                    xmux.AddMember("hKeepAlivePeriod", hkap, ea);
+                                                    hasXmux = true;
+                                                }
+                                            }
                                             if (hasXmux)
                                                 ed.AddMember("xmux", xmux, ea);
+                                        }
+                                    }
+                                    if (!x.XhttpClashOpts.empty()) {
+                                        // clash 文档键 → Xray extra 驼峰键（映射表见 proxy.h）
+                                        rapidjson::Document cd;
+                                        cd.Parse(x.XhttpClashOpts.data());
+                                        if (!cd.HasParseError() && cd.IsObject()) {
+                                            for (const auto &f : XHTTP_DOC_FIELDS) {
+                                                if (!cd.HasMember(f.mihomo))
+                                                    continue;
+                                                const auto &v = cd[f.mihomo];
+                                                if (v.IsBool())
+                                                    ed.AddMember(rapidjson::Value(f.xray, ea),
+                                                                 rapidjson::Value(v.GetBool()), ea);
+                                                else if (v.IsString() && v.GetStringLength() > 0)
+                                                    ed.AddMember(rapidjson::Value(f.xray, ea),
+                                                                 rapidjson::Value(v.GetString(), ea), ea);
+                                            }
                                         }
                                     }
                                     if (!ed.ObjectEmpty()) {

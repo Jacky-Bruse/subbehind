@@ -15,6 +15,7 @@
 #include "generator/template/templates.h"
 #include "parser/subparser.h"
 #include "utils/base64/base64.h"
+#include "utils/urlencode.h"
 
 namespace {
 
@@ -627,7 +628,8 @@ void test_xray_download_settings_xmux_and_sc_max() {
                 "maxConcurrency": "0",
                 "cMaxReuseTimes": "0",
                 "hMaxRequestTimes": "600-900",
-                "hMaxReusableSecs": "1800-3000"
+                "hMaxReusableSecs": "1800-3000",
+                "hKeepAlivePeriod": 30
               }
             }
           }
@@ -651,17 +653,21 @@ void test_xray_download_settings_xmux_and_sc_max() {
     const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
     require(exported.find("download-settings:") != std::string::npos,
             "expected download-settings to be exported");
-    require(exported.find("sc-max-each-post-bytes: 500000") != std::string::npos,
-            "expected download-settings.sc-max-each-post-bytes from xray scMaxEachPostBytes");
+    require(exported.find("sc-max-each-post-bytes") == std::string::npos,
+            "xray scMaxEachPostBytes must be dropped: mihomo download-settings has no such field");
     require(exported.find("reuse-settings:") != std::string::npos,
             "expected download-settings.reuse-settings from xray xmux");
     require(exported.find("max-connections: 16-32") != std::string::npos,
             "expected reuse-settings.max-connections from xray xmux.maxConnections");
     require(exported.find("h-max-reusable-secs: 1800-3000") != std::string::npos,
             "expected reuse-settings.h-max-reusable-secs from xray xmux.hMaxReusableSecs");
+    require(exported.find("h-keep-alive-period: 30") != std::string::npos,
+            "expected reuse-settings.h-keep-alive-period from xray xmux.hKeepAlivePeriod");
 }
 
 void test_clash_vless_xhttp_download_settings_full() {
+    // mihomo 的 XHTTPDownloadSettings 没有 x-padding-bytes / sc-max-each-post-bytes /
+    // no-grpc-header 字段，输入里带上它们必须被丢弃，不得出现在导出中
     const std::string content = R"(proxies:
   - name: xhttp-ds
     type: vless
@@ -680,6 +686,7 @@ void test_clash_vless_xhttp_download_settings_full() {
         path: /down
         x-padding-bytes: "100-500"
         sc-max-each-post-bytes: 500000
+        no-grpc-header: true
         skip-cert-verify: false
         reuse-settings:
           max-connections: "8"
@@ -700,8 +707,12 @@ void test_clash_vless_xhttp_download_settings_full() {
     const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
     require(exported.find("download-settings:") != std::string::npos,
             "expected download-settings to be exported");
-    require(exported.find("sc-max-each-post-bytes: 500000") != std::string::npos,
-            "expected download-settings.sc-max-each-post-bytes to be exported");
+    require(exported.find("sc-max-each-post-bytes: 500000") == std::string::npos,
+            "download-settings must not carry sc-max-each-post-bytes (not a mihomo field)");
+    require(exported.find("x-padding-bytes: 100-500") == std::string::npos,
+            "download-settings must not carry x-padding-bytes (not a mihomo field)");
+    require(exported.find("no-grpc-header") == std::string::npos,
+            "download-settings must not carry no-grpc-header (not a mihomo field)");
     require(exported.find("reuse-settings:") != std::string::npos,
             "expected download-settings.reuse-settings to be exported");
     require(exported.find("max-connections: 8") != std::string::npos,
@@ -709,6 +720,469 @@ void test_clash_vless_xhttp_download_settings_full() {
     require(exported.find("skip-cert-verify: 0") != std::string::npos ||
             exported.find("skip-cert-verify: false") != std::string::npos,
             "expected download-settings.skip-cert-verify to be exported");
+}
+
+// mihomo 文档 xhttp-opts 其余 16 个标量字段必须原样透传（clash → clash），
+// 键名与 wiki.metacubex.one/config/proxies/transport/#xhttp-opts 逐一对应
+void test_clash_xhttp_doc_scalar_fields_roundtrip() {
+    const std::string content = R"(proxies:
+  - name: xhttp-doc-fields
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /xhttp
+      mode: packet-up
+      x-padding-obfs-mode: true
+      x-padding-key: xp_key
+      x-padding-header: X-Padding
+      x-padding-placement: cookie
+      x-padding-method: tokenish
+      uplink-http-method: PUT
+      session-placement: query
+      session-key: sess
+      session-table: Base62
+      session-length: 16-32
+      seq-placement: query
+      seq-key: seq
+      uplink-data-placement: header
+      uplink-data-key: chunk
+      uplink-chunk-size: 4096
+      sc-min-posts-interval-ms: 25
+)";
+
+    std::vector<Proxy> nodes{parse_clash(content)};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node opts = YAML::Load(exported)["proxies"][0]["xhttp-opts"];
+    require(opts["x-padding-obfs-mode"].as<bool>(), "x-padding-obfs-mode must round-trip as bool");
+    const std::pair<const char *, const char *> expected[] = {
+        {"x-padding-key", "xp_key"},
+        {"x-padding-header", "X-Padding"},
+        {"x-padding-placement", "cookie"},
+        {"x-padding-method", "tokenish"},
+        {"uplink-http-method", "PUT"},
+        {"session-placement", "query"},
+        {"session-key", "sess"},
+        {"session-table", "Base62"},
+        {"session-length", "16-32"},
+        {"seq-placement", "query"},
+        {"seq-key", "seq"},
+        {"uplink-data-placement", "header"},
+        {"uplink-data-key", "chunk"},
+        {"uplink-chunk-size", "4096"},
+        {"sc-min-posts-interval-ms", "25"},
+    };
+    for (const auto &kv : expected)
+        require(opts[kv.first].IsDefined() && opts[kv.first].as<std::string>() == kv.second,
+                std::string("xhttp-opts.") + kv.first + " must round-trip");
+}
+
+// clash 输入的 16 个文档标量字段导出 vless:// 链接时必须映射进 extra=（Xray 驼峰键名）。
+// 键名对照 Xray infra/conf/transport_method.go 的 SplitHTTPConfig；
+// Int32Range 字段（sessionIDLength/uplinkChunkSize/scMinPostsIntervalMs）字符串形式即合法
+void test_clash_xhttp_doc_fields_exported_to_link_extra() {
+    const std::string content = R"(proxies:
+  - name: xhttp-extra-out
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /xhttp
+      mode: packet-up
+      x-padding-obfs-mode: true
+      x-padding-key: xp_key
+      x-padding-header: X-Padding
+      x-padding-placement: cookie
+      x-padding-method: tokenish
+      uplink-http-method: PUT
+      session-placement: query
+      session-key: sess
+      session-table: Base62
+      session-length: 16-32
+      seq-placement: query
+      seq-key: seq
+      uplink-data-placement: header
+      uplink-data-key: chunk
+      uplink-chunk-size: 4096
+      sc-min-posts-interval-ms: 25
+)";
+
+    std::vector<Proxy> nodes;
+    explodeSub(content, nodes);
+    require(nodes.size() == 1, "expected one node");
+
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    const auto extraPos = decoded.find("extra=");
+    require(extraPos != std::string::npos, "expected exported link to contain extra=");
+    auto extraEnd = decoded.find_first_of("&#", extraPos);
+    if (extraEnd == std::string::npos)
+        extraEnd = decoded.size();
+    const std::string extraJson = urlDecode(decoded.substr(extraPos + 6, extraEnd - extraPos - 6));
+
+    const std::pair<const char *, const char *> expected[] = {
+        {"\"xPaddingObfsMode\"", "true"},
+        {"\"xPaddingKey\"", "\"xp_key\""},
+        {"\"xPaddingHeader\"", "\"X-Padding\""},
+        {"\"xPaddingPlacement\"", "\"cookie\""},
+        {"\"xPaddingMethod\"", "\"tokenish\""},
+        {"\"uplinkHTTPMethod\"", "\"PUT\""},
+        {"\"sessionIDPlacement\"", "\"query\""},
+        {"\"sessionIDKey\"", "\"sess\""},
+        {"\"sessionIDTable\"", "\"Base62\""},
+        {"\"sessionIDLength\"", "\"16-32\""},
+        {"\"seqPlacement\"", "\"query\""},
+        {"\"seqKey\"", "\"seq\""},
+        {"\"uplinkDataPlacement\"", "\"header\""},
+        {"\"uplinkDataKey\"", "\"chunk\""},
+        {"\"uplinkChunkSize\"", "\"4096\""},
+        {"\"scMinPostsIntervalMs\"", "\"25\""},
+    };
+    for (const auto &kv : expected)
+        require(extraJson.find(std::string(kv.first) + ":" + kv.second) != std::string::npos,
+                std::string("extra must contain ") + kv.first + ":" + kv.second);
+}
+
+// 反方向：链接 extra 里的 Xray 驼峰字段要翻译成 clash 的 xhttp-opts 键
+void test_vless_link_extra_doc_fields_mapped_to_clash() {
+    // extra = {"xPaddingObfsMode":true,"sessionIDPlacement":"query","sessionIDLength":"16-32",
+    //          "uplinkChunkSize":4096,"scMinPostsIntervalMs":25,"uplinkHTTPMethod":"PUT"}
+    const std::string content =
+        "vless://12345678-1234-1234-1234-123456789012@xhttp.example.com:443"
+        "?security=tls&type=xhttp&path=%2Fxhttp&mode=packet-up"
+        "&extra=%7B%22xPaddingObfsMode%22%3Atrue%2C%22sessionIDPlacement%22%3A%22query%22%2C"
+        "%22sessionIDLength%22%3A%2216-32%22%2C%22uplinkChunkSize%22%3A4096%2C"
+        "%22scMinPostsIntervalMs%22%3A25%2C%22uplinkHTTPMethod%22%3A%22PUT%22%7D#extra-in";
+
+    std::vector<Proxy> nodes{parse_link(content)};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node opts = YAML::Load(exported)["proxies"][0]["xhttp-opts"];
+    require(opts["x-padding-obfs-mode"].as<bool>(), "extra.xPaddingObfsMode must map to bool");
+    require(opts["session-placement"].as<std::string>() == "query",
+            "extra.sessionIDPlacement must map to session-placement");
+    require(opts["session-length"].as<std::string>() == "16-32",
+            "extra.sessionIDLength must map to session-length");
+    require(opts["uplink-chunk-size"].as<std::string>() == "4096",
+            "extra.uplinkChunkSize (int) must map to uplink-chunk-size");
+    require(opts["sc-min-posts-interval-ms"].as<std::string>() == "25",
+            "extra.scMinPostsIntervalMs (int) must map to sc-min-posts-interval-ms");
+    require(opts["uplink-http-method"].as<std::string>() == "PUT",
+            "extra.uplinkHTTPMethod must map to uplink-http-method");
+}
+
+// 主节点级 TLS 伪装层选项（mihomo VlessOption 均支持）clash → clash 透传
+void test_clash_vless_tls_layer_opts_roundtrip() {
+    const std::string content = R"(proxies:
+  - name: vless-tls-opts
+    type: vless
+    server: t.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+    name-cert-verify: cert.example.com
+    ech-opts:
+      enable: true
+      config: ECHCONFIGBASE64
+    shadow-tls-opts:
+      password: stpw
+      version: 3
+    restls-opts:
+      password: rpw
+      version-hint: tls13
+    jls-opts:
+      password: jpw
+      iv: jiv
+)";
+
+    std::vector<Proxy> nodes{parse_clash(content)};
+    require(!nodes[0].MihomoTlsOpts.empty(), "TLS layer opts must be parsed into MihomoTlsOpts");
+    require(nodes[0].MihomoTlsOpts.find("ech-opts") != std::string::npos,
+            "ech-opts must be present in MihomoTlsOpts, got: " + nodes[0].MihomoTlsOpts);
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node p = YAML::Load(exported)["proxies"][0];
+    require(p["name-cert-verify"].as<std::string>() == "cert.example.com",
+            "name-cert-verify must round-trip");
+    require(p["ech-opts"]["enable"].as<bool>(), "ech-opts.enable must stay boolean");
+    require(p["ech-opts"]["config"].as<std::string>() == "ECHCONFIGBASE64",
+            "ech-opts.config must round-trip");
+    require(p["shadow-tls-opts"]["password"].as<std::string>() == "stpw",
+            "shadow-tls-opts.password must round-trip");
+    require(p["shadow-tls-opts"]["version"].as<int>() == 3,
+            "shadow-tls-opts.version must stay numeric");
+    require(p["restls-opts"]["version-hint"].as<std::string>() == "tls13",
+            "restls-opts.version-hint must round-trip");
+    require(p["jls-opts"]["password"].as<std::string>() == "jpw",
+            "jls-opts.password must round-trip");
+    require(p["jls-opts"]["iv"].as<std::string>() == "jiv",
+            "jls-opts.iv must round-trip");
+}
+
+// download-settings 的 proxy 部分同样要透传这五个 TLS 键
+void test_clash_xhttp_download_settings_tls_layer_opts() {
+    const std::string content = R"(proxies:
+  - name: xhttp-ds-tls
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /up
+      download-settings:
+        server: dl.example.com
+        port: 443
+        tls: true
+        name-cert-verify: dl-cert.example.com
+        ech-opts:
+          enable: true
+          config: DLECH
+        shadow-tls-opts:
+          password: dl-stpw
+        restls-opts:
+          password: dl-rpw
+        jls-opts:
+          password: dl-jpw
+)";
+
+    std::vector<Proxy> nodes{parse_clash(content)};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node ds = YAML::Load(exported)["proxies"][0]["xhttp-opts"]["download-settings"];
+    require(ds["name-cert-verify"].as<std::string>() == "dl-cert.example.com",
+            "download-settings.name-cert-verify must round-trip");
+    require(ds["ech-opts"]["enable"].as<bool>(), "download-settings.ech-opts.enable must stay boolean");
+    require(ds["ech-opts"]["config"].as<std::string>() == "DLECH",
+            "download-settings.ech-opts.config must round-trip");
+    require(ds["shadow-tls-opts"]["password"].as<std::string>() == "dl-stpw",
+            "download-settings.shadow-tls-opts must round-trip");
+    require(ds["restls-opts"]["password"].as<std::string>() == "dl-rpw",
+            "download-settings.restls-opts must round-trip");
+    require(ds["jls-opts"]["password"].as<std::string>() == "dl-jpw",
+            "download-settings.jls-opts must round-trip");
+}
+
+// 顶层 ech/ech-config 是历史误写（mihomo 只认 ech-opts{enable,config}），
+// 旧键输入要迁移导出为 ech-opts，且不再输出旧键；新键输入要能进 EchEnable/EchConfig
+void test_clash_vless_ech_keys_unified_to_ech_opts() {
+    const std::string legacy = R"(proxies:
+  - name: ech-legacy
+    type: vless
+    server: e.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+    ech: true
+    ech-config: LEGACYECH
+)";
+    std::vector<Proxy> nodes{parse_clash(legacy)};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node p = YAML::Load(exported)["proxies"][0];
+    require(p["ech-opts"]["enable"].as<bool>(), "legacy ech must migrate to ech-opts.enable");
+    require(p["ech-opts"]["config"].as<std::string>() == "LEGACYECH",
+            "legacy ech-config must migrate to ech-opts.config");
+    require(!p["ech"].IsDefined(), "top-level ech key must not be emitted (not a mihomo key)");
+    require(!p["ech-config"].IsDefined(), "top-level ech-config key must not be emitted");
+
+    const std::string modern = R"(proxies:
+  - name: ech-modern
+    type: vless
+    server: e.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+    ech-opts:
+      enable: true
+      config: MODERNECH
+)";
+    const Proxy n2 = parse_clash(modern);
+    require(!n2.EchEnable.is_undef() && n2.EchEnable.get(),
+            "ech-opts.enable must feed EchEnable");
+    require(n2.EchConfig == "MODERNECH", "ech-opts.config must feed EchConfig");
+}
+
+// no-grpc-header ↔ extra.noGRPCHeader 双向映射
+void test_xhttp_no_grpc_header_link_mapping() {
+    const std::string clashIn = R"(proxies:
+  - name: ngh-out
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /xhttp
+      mode: stream-up
+      no-grpc-header: true
+)";
+    std::vector<Proxy> nodes;
+    explodeSub(clashIn, nodes);
+    require(nodes.size() == 1, "expected one node");
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    require(decoded.find("extra=") != std::string::npos, "expected link to contain extra=");
+    const std::string extraJson = urlDecode(decoded.substr(decoded.find("extra=") + 6));
+    require(extraJson.find("\"noGRPCHeader\":true") != std::string::npos,
+            "clash no-grpc-header must map to extra.noGRPCHeader");
+
+    // 反方向：extra.noGRPCHeader → clash no-grpc-header
+    const Proxy node = parse_link(
+        "vless://12345678-1234-1234-1234-123456789012@xhttp.example.com:443"
+        "?security=tls&type=xhttp&path=%2Fxhttp&mode=stream-up"
+        "&extra=%7B%22noGRPCHeader%22%3Atrue%7D#ngh-in");
+    require(!node.XhttpNoGrpcHeader.is_undef() && node.XhttpNoGrpcHeader.get(),
+            "extra.noGRPCHeader must map to XhttpNoGrpcHeader");
+}
+
+// reuse-settings.h-keep-alive-period ↔ xmux.hKeepAlivePeriod 双向映射
+// Xray XmuxConfig.HKeepAlivePeriod 是 int64（无字符串反序列化），extra 里必须是数值
+void test_xhttp_h_keep_alive_period_xmux_mapping() {
+    const std::string clashIn = R"(proxies:
+  - name: hkap-out
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /xhttp
+      mode: packet-up
+      reuse-settings:
+        max-connections: "16"
+        h-keep-alive-period: "30"
+)";
+    std::vector<Proxy> nodes;
+    explodeSub(clashIn, nodes);
+    require(nodes.size() == 1, "expected one node");
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    const std::string extraJson = urlDecode(decoded.substr(decoded.find("extra=") + 6));
+    require(extraJson.find("\"hKeepAlivePeriod\":30") != std::string::npos,
+            "h-keep-alive-period must map to numeric xmux.hKeepAlivePeriod");
+}
+
+// 链接/Xray 输入 extra 里的 scMaxEachPostBytes 与 xmux 要翻译到 clash 顶层
+// sc-max-each-post-bytes / reuse-settings（此前只在链接→链接时随 extra 原样保留）
+void test_vless_link_extra_scmax_xmux_mapped_to_clash() {
+    // extra = {"scMaxEachPostBytes":1500000,"xmux":{"maxConnections":"16-32","hKeepAlivePeriod":30}}
+    const Proxy node = parse_link(
+        "vless://12345678-1234-1234-1234-123456789012@xhttp.example.com:443"
+        "?security=tls&type=xhttp&path=%2Fxhttp&mode=packet-up"
+        "&extra=%7B%22scMaxEachPostBytes%22%3A1500000%2C%22xmux%22%3A%7B"
+        "%22maxConnections%22%3A%2216-32%22%2C%22hKeepAlivePeriod%22%3A30%7D%7D#scmax-xmux-in");
+    require(node.XhttpScMaxEachPostBytes == "1500000",
+            "extra.scMaxEachPostBytes must feed XhttpScMaxEachPostBytes");
+    require(!node.XhttpReuseSettings.empty(), "extra.xmux must feed XhttpReuseSettings");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node opts = YAML::Load(exported)["proxies"][0]["xhttp-opts"];
+    require(opts["sc-max-each-post-bytes"].as<std::string>() == "1500000",
+            "extra.scMaxEachPostBytes must reach clash sc-max-each-post-bytes");
+    require(opts["reuse-settings"]["max-connections"].as<std::string>() == "16-32",
+            "extra.xmux.maxConnections must reach clash reuse-settings");
+    require(opts["reuse-settings"]["h-keep-alive-period"].as<std::string>() == "30",
+            "extra.xmux.hKeepAlivePeriod must reach clash reuse-settings");
+}
+
+// download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
+// 平铺的 public-key/short-id 会被 mihomo 静默忽略导致下行丢失 reality 配置
+void test_clash_xhttp_download_settings_reality_opts_nested() {
+    const std::string content = R"(proxies:
+  - name: xhttp-ds-reality
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /up
+      download-settings:
+        server: dl.example.com
+        port: 443
+        tls: true
+        servername: dl.example.com
+        reality-opts:
+          public-key: dl-pbk
+          short-id: 11aa22bb
+        path: /down
+)";
+
+    const Proxy node = parse_clash(content);
+    require(node.XhttpDownload.find("dl-pbk") != std::string::npos,
+            "nested reality-opts.public-key must be parsed from download-settings");
+    require(node.XhttpDownload.find("11aa22bb") != std::string::npos,
+            "nested reality-opts.short-id must be parsed from download-settings");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node ds = YAML::Load(exported)["proxies"][0]["xhttp-opts"]["download-settings"];
+    require(ds["reality-opts"].IsDefined() && ds["reality-opts"].IsMap(),
+            "download-settings must emit nested reality-opts");
+    require(ds["reality-opts"]["public-key"].as<std::string>() == "dl-pbk",
+            "download-settings.reality-opts.public-key must survive");
+    require(ds["reality-opts"]["short-id"].as<std::string>() == "11aa22bb",
+            "download-settings.reality-opts.short-id must survive");
+    require(!ds["public-key"].IsDefined(),
+            "download-settings must not emit flat public-key (mihomo ignores it)");
+    require(!ds["short-id"].IsDefined(),
+            "download-settings must not emit flat short-id (mihomo ignores it)");
 }
 
 void test_clash_vless_xhttp_reuse_settings_h_keep_alive_period() {
@@ -1000,8 +1474,9 @@ void test_formatter_short_id_preserves_xhttp_download_settings() {
       download-settings:
         server: dl.example.com
         port: 443
-        public-key: dl-pbk
-        short-id: 11223344
+        reality-opts:
+          public-key: dl-pbk
+          short-id: 11223344
         path: /down
         host: dl-host.example.com
 )";
@@ -1369,6 +1844,16 @@ int main() {
         test_clash_vless_xhttp_extra_exported_to_link();
         test_xray_download_settings_xmux_and_sc_max();
         test_clash_vless_xhttp_download_settings_full();
+        test_clash_xhttp_doc_scalar_fields_roundtrip();
+        test_clash_xhttp_download_settings_reality_opts_nested();
+        test_clash_xhttp_doc_fields_exported_to_link_extra();
+        test_vless_link_extra_doc_fields_mapped_to_clash();
+        test_clash_vless_tls_layer_opts_roundtrip();
+        test_clash_xhttp_download_settings_tls_layer_opts();
+        test_clash_vless_ech_keys_unified_to_ech_opts();
+        test_xhttp_no_grpc_header_link_mapping();
+        test_xhttp_h_keep_alive_period_xmux_mapping();
+        test_vless_link_extra_scmax_xmux_mapped_to_clash();
         test_quanx_export_skips_vless_xhttp_node();
         test_proxy_group_toml_extras_preserve_scalar_types();
         test_proxy_group_trailing_provider_is_not_treated_as_extra();
