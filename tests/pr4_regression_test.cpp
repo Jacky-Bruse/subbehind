@@ -2581,6 +2581,75 @@ void test_xray_xhttp_direct_fields_follow_official_names() {
                 node.XhttpClashOpts);
 }
 
+// Xray 与 mihomo 的 null 语义不同，不能套用同一条规则：
+// Xray 的 SplitHTTPConfig/StreamConfig 字段多为非指针类型，JSON null 经
+// encoding/json 反序列化是 no-op，结果为零值（空串），随后由运行时各自回退
+// （如 dialer 里 Host 为空才取 tls.ServerName）——这是运行时回退，不是配置层继承。
+// 而 mihomo 的 XHTTPDownloadSettings 是指针字段，缺失才表示沿用主连接。
+// 故 Xray 侧的 null 必须落成显式零值，只有键缺失才对应 canonical 的缺失。
+void test_xray_download_settings_null_means_zero_not_inherit() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {
+            "address": "dl.example.com", "port": 443, "security": "tls",
+            "tlsSettings": {"serverName": null},
+            "xhttpSettings": {"path": null, "host": "dl-host.example.com"}
+          }
+        }
+      }
+    }
+  ]
+})";
+    const Proxy node = parse_v2ray_conf(content);
+    // null 是显式零值，必须写成空串而非省略（省略会让 mihomo 继承主连接）
+    require(node.XhttpDownload.find("\"path\":\"\"") != std::string::npos,
+            "Xray null path must become an explicit empty value, got: " + node.XhttpDownload);
+    require(node.XhttpDownload.find("\"servername\":\"\"") != std::string::npos,
+            "Xray null serverName must become an explicit empty value, got: " +
+                node.XhttpDownload);
+    // 同级中真正给了值的字段不受影响
+    require(node.XhttpDownload.find("dl-host.example.com") != std::string::npos,
+            "sibling values must be unaffected, got: " + node.XhttpDownload);
+}
+
+// 对照组：键缺失才是"沿用主连接"，canonical 里不应出现该成员
+void test_xray_download_settings_absent_key_means_inherit() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {
+            "address": "dl.example.com", "port": 443, "security": "tls",
+            "xhttpSettings": {"host": "dl-host.example.com"}
+          }
+        }
+      }
+    }
+  ]
+})";
+    const Proxy node = parse_v2ray_conf(content);
+    require(node.XhttpDownload.find("\"path\"") == std::string::npos,
+            "absent path must stay absent so mihomo inherits, got: " + node.XhttpDownload);
+    require(node.XhttpDownload.find("\"servername\"") == std::string::npos,
+            "absent serverName must stay absent, got: " + node.XhttpDownload);
+}
+
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
 // 平铺的 public-key/short-id 会被 mihomo 静默忽略导致下行丢失 reality 配置
 void test_clash_xhttp_download_settings_reality_opts_nested() {
@@ -3337,6 +3406,8 @@ int main() {
         test_xray_xhttp_direct_fields_follow_official_names();
         test_xray_xhttp_extra_replaces_outer_fields();
         test_xray_xhttp_direct_official_fields();
+        test_xray_download_settings_null_means_zero_not_inherit();
+        test_xray_download_settings_absent_key_means_inherit();
         test_xray_download_settings_missing_security_means_no_tls();
         test_xray_download_settings_explicit_values_preserved();
         test_clash_download_settings_explicit_empty_preserved();

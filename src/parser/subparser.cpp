@@ -97,6 +97,23 @@ static rapidjson::Value xmuxToReuseSettings(const rapidjson::Value &xm,
     return rsObj;
 }
 
+// Xray 侧的 null 与 mihomo 侧的"未设置"语义不同，不能合用一条规则：
+// Xray 的 StreamConfig/SplitHTTPConfig 字段多为非指针类型，encoding/json 对 null
+// 是 no-op，反序列化后得到零值（空串），之后由运行时各自回退（如 dialer 中
+// Host 为空才取 tls.ServerName）——那是运行时回退，而非配置层继承。
+// 而 mihomo 的 XHTTPDownloadSettings 全是指针字段，缺失才表示沿用主连接。
+// 故此处：键缺失 → 不写（canonical 的"继承"）；键存在含 null → 写显式值（null 记零值）。
+static void copyXrayScalar(const rapidjson::Value &src, const char *srcKey, const char *outKey,
+                           rapidjson::Document &out, rapidjson::Document::AllocatorType &alloc) {
+    if (!src.IsObject() || !src.HasMember(srcKey))
+        return;
+    const auto &v = src[srcKey];
+    if (v.IsString())
+        out.AddMember(rapidjson::Value(outKey, alloc), rapidjson::Value(v, alloc), alloc);
+    else if (v.IsNull())
+        out.AddMember(rapidjson::Value(outKey, alloc), rapidjson::Value("", alloc), alloc);
+}
+
 // Convert Xray downloadSettings JSON to Mihomo canonical JSON (Mihomo field names)
 static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
     if (xray_json.empty())
@@ -110,9 +127,7 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
     out.SetObject();
     auto &alloc = out.GetAllocator();
 
-    std::string addr = GetMember(d, "address");
-    if (!addr.empty())
-        out.AddMember("server", rapidjson::Value(addr.c_str(), alloc), alloc);
+    copyXrayScalar(d, "address", "server", out, alloc);
 
     if (d.HasMember("port") && d["port"].IsInt())
         out.AddMember("port", d["port"].GetInt(), alloc);
@@ -132,12 +147,8 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
     const char *tlsKey = (security == "reality") ? "realitySettings" : "tlsSettings";
     if (d.HasMember(tlsKey) && d[tlsKey].IsObject()) {
         const auto &ts = d[tlsKey];
-        std::string sn = GetMember(ts, "serverName");
-        if (!sn.empty())
-            out.AddMember("servername", rapidjson::Value(sn.c_str(), alloc), alloc);
-        std::string fp = GetMember(ts, "fingerprint");
-        if (!fp.empty())
-            out.AddMember("client-fingerprint", rapidjson::Value(fp.c_str(), alloc), alloc);
+        copyXrayScalar(ts, "serverName", "servername", out, alloc);
+        copyXrayScalar(ts, "fingerprint", "client-fingerprint", out, alloc);
         if (ts.HasMember("allowInsecure") && ts["allowInsecure"].IsBool())
             out.AddMember("skip-cert-verify", ts["allowInsecure"].GetBool(), alloc);
         if (ts.HasMember("alpn") && ts["alpn"].IsArray()) {
@@ -151,9 +162,13 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
             rapidjson::Value ro(rapidjson::kObjectType);
             std::string pbk = GetMember(ts, "publicKey");
             ro.AddMember("public-key", rapidjson::Value(pbk.c_str(), alloc), alloc);
-            std::string sid = GetMember(ts, "shortId");
-            if (!sid.empty())
-                ro.AddMember("short-id", rapidjson::Value(sid.c_str(), alloc), alloc);
+            if (ts.HasMember("shortId")) {
+                const auto &sidv = ts["shortId"];
+                if (sidv.IsString())
+                    ro.AddMember("short-id", rapidjson::Value(sidv, alloc), alloc);
+                else if (sidv.IsNull())
+                    ro.AddMember("short-id", rapidjson::Value("", alloc), alloc);
+            }
             out.AddMember("reality-opts", ro, alloc);
         }
     }
@@ -162,12 +177,11 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
     const char *xhttpKey = "xhttpSettings";
     if (d.HasMember(xhttpKey) && d[xhttpKey].IsObject()) {
         const auto &xs = d[xhttpKey];
-        // 成员存在即为显式覆盖，含空串
-        if (xs.HasMember("path") && xs["path"].IsString())
-            out.AddMember("path", rapidjson::Value(xs["path"], alloc), alloc);
-        if (xs.HasMember("host") && xs["host"].IsString())
-            out.AddMember("host", rapidjson::Value(xs["host"], alloc), alloc);
-        if (xs.HasMember("headers") && xs["headers"].IsObject() && !xs["headers"].ObjectEmpty())
+        // 成员存在即为显式覆盖，含空串与 null（后者是 Xray 的零值）
+        copyXrayScalar(xs, "path", "path", out, alloc);
+        copyXrayScalar(xs, "host", "host", out, alloc);
+        // headers 在 mihomo 侧是 *map，空对象表示清除继承，故存在即写出
+        if (xs.HasMember("headers") && xs["headers"].IsObject())
             out.AddMember("headers", rapidjson::Value(xs["headers"], alloc), alloc);
         // noGRPCHeader/xPaddingBytes/scMaxEachPostBytes 不落 canonical：
         // mihomo 的 XHTTPDownloadSettings 没有这些字段，写出去也会被静默忽略
