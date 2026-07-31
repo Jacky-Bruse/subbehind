@@ -2650,6 +2650,66 @@ void test_xray_download_settings_absent_key_means_inherit() {
             "absent serverName must stay absent, got: " + node.XhttpDownload);
 }
 
+// 字符串保型此前只在 nodelist 路径验证过，而规则生成路径（ext.nodelist=false）
+// 会先 replaceAll("!<str> ", "") 把锚定标签整体删除，再调美化函数——标签已不存在，
+// 值随即裸化。这条才是最常用的输出路径。
+void test_string_anchoring_survives_rule_generation_path() {
+    std::vector<Proxy> nodes;
+    explodeSub("ss://YWVzLTEyOC1nY206MDEyMw@ss.example.com:443#numeric-pass", nodes);
+    require(nodes.size() == 1 && nodes[0].Password == "0123", "expected password 0123");
+
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.clash_new_field_name = true;
+    ext.nodelist = false;  // 规则生成路径
+    const std::string exported = proxyToClash(nodes, "proxies:\n", rulesets, groups, false, ext);
+
+    const YAML::Node rt = YAML::Load(exported)["proxies"][0];
+    require(rt["password"].as<std::string>() == "0123",
+            "numeric password must survive the rule path, got:\n" + exported);
+    require(rt["password"].Tag() != "?",
+            "numeric password must stay anchored on the rule path, got:\n" + exported);
+}
+
+// 只有真正会被 YAML 读成非字符串的值才需要锚定。像 1,a / 1abc 本就是字符串，
+// 锚定它们反而会让 beautifyStringTags 的文本定界撞上逗号而截断，产出损坏的 YAML。
+void test_anchoring_skips_values_that_are_already_strings() {
+    const std::string content = R"(proxies:
+  - name: tricky
+    type: vless
+    server: t.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+    jls-opts:
+      password: "1,a"
+      username: "16-32"
+      iv2: "1abc"
+)";
+    std::vector<Proxy> nodes{parse_clash(content)};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+
+    // 输出必须是合法 YAML，且值完整——含逗号的值被截断时这里会直接解析失败
+    const YAML::Node j = YAML::Load(exported)["proxies"][0]["jls-opts"];
+    require(j["password"].as<std::string>() == "1,a",
+            "comma-containing value must survive intact, got:\n" + exported);
+    require(j["username"].as<std::string>() == "16-32",
+            "range-like value must survive intact, got:\n" + exported);
+    require(j["iv2"].as<std::string>() == "1abc",
+            "digit-prefixed string must survive intact, got:\n" + exported);
+    // 精确判定的收益：本就是字符串的值根本不该被锚定，
+    // 否则要靠美化阶段的兜底逻辑才能避免截断
+    require(exported.find("!<str>") == std::string::npos,
+            "values that are already strings must not be anchored at all, got:\n" + exported);
+}
+
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
 // 平铺的 public-key/short-id 会被 mihomo 静默忽略导致下行丢失 reality 配置
 void test_clash_xhttp_download_settings_reality_opts_nested() {
@@ -3371,6 +3431,8 @@ int main() {
         test_xhttp_no_grpc_header_link_mapping();
         test_xhttp_h_keep_alive_period_xmux_mapping();
         test_vless_link_extra_scmax_xmux_mapped_to_clash();
+        test_string_anchoring_survives_rule_generation_path();
+        test_anchoring_skips_values_that_are_already_strings();
         test_clash_string_scalars_keep_string_type();
         test_clash_password_numeric_keeps_string_type();
         test_clash_string_anchor_beautify_in_flow_style();

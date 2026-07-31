@@ -268,6 +268,39 @@ static void addExtraNumericOrRange(rapidjson::Document &obj, const char *key,
 // unconvertible type 而丢弃整个节点。这里判断一个值是否需要锚定类型。
 // ponytail: 首字符像数字起始就一律锚定，宁可多一个引号也不漏判；
 // 副作用只是 "1abc" 这类值也带上引号，无害。
+// 值是否会被 YAML 读成数字。只认真正的数字形态——"1,a"、"16-32"、"1abc"
+// 这类本就是字符串，不该锚定：给它们打标签只会让 beautifyStringTags 的
+// 文本定界撞上逗号等分隔符而截断，产出损坏的 YAML。
+static bool looksLikeYamlNumber(const std::string &v) {
+    size_t i = 0;
+    if (v[i] == '+' || v[i] == '-')
+        ++i;
+    if (i >= v.size())
+        return false;
+    // 0x / 0o / 0b 进制前缀
+    if (v.size() - i > 2 && v[i] == '0' && strchr("xXoObB", v[i + 1]) != nullptr)
+        return v.find_first_not_of("0123456789abcdefABCDEF", i + 2) == std::string::npos;
+    bool digit = false, dot = false, exp = false;
+    for (; i < v.size(); ++i) {
+        if (isdigit(static_cast<unsigned char>(v[i]))) {
+            digit = true;
+            continue;
+        }
+        if (v[i] == '.' && !dot && !exp) {
+            dot = true;
+            continue;
+        }
+        if ((v[i] == 'e' || v[i] == 'E') && digit && !exp) {
+            exp = true;
+            if (i + 1 < v.size() && (v[i + 1] == '+' || v[i + 1] == '-'))
+                ++i;
+            continue;
+        }
+        return false;
+    }
+    return digit;
+}
+
 static bool yamlNeedsStringTag(const std::string &v) {
     // 空串无需锚定：yaml-cpp 本就把它输出成 ""，再套一层会变成 """"
     if (v.empty())
@@ -276,7 +309,7 @@ static bool yamlNeedsStringTag(const std::string &v) {
     if (lower == "true" || lower == "false" || lower == "null" || lower == "~" ||
         lower == "yes" || lower == "no" || lower == "on" || lower == "off")
         return true;
-    return isdigit(static_cast<unsigned char>(v[0])) || v[0] == '+' || v[0] == '-' || v[0] == '.';
+    return looksLikeYamlNumber(v);
 }
 
 // 写入字符串标量并在必要时打 !<str> 标签锚定类型，由 beautifyStringTags 还原成
@@ -1340,12 +1373,13 @@ std::string beautifyStringTags(std::string input) {
             // 提取原始值
             std::string originalId = input.substr(startPos + target.length(), endPos - startPos - target.length());
 
-            // 去除首尾空格。被锚定的只会是形似布尔/数字的简单标量，
-            // 不含引号或反斜杠，直接包引号即安全。
             originalId = trim(originalId);
 
-            // 连标签一并替换为带引号的标量
-            input.replace(startPos, endPos - startPos, "\"" + originalId + "\"");
+            // 含引号或反斜杠说明文本定界不可靠（值里可能本就有分隔符），
+            // 保留 !<str> 标签而不强行加引号——yaml.v3 的 resolve 对不可解析
+            // 标签原样返回字符串，功能正确，只是不够美观。
+            if (originalId.find_first_of("\"\\") == std::string::npos)
+                input.replace(startPos, endPos - startPos, "\"" + originalId + "\"");
         }
 
         // 继续查找下一个实例
@@ -1400,7 +1434,6 @@ std::string proxyToClash(std::vector<Proxy> &nodes, const std::string &base_conf
     output_content.insert(0, yamlnode_str);
     //rulesetToClash(yamlnode, ruleset_content_array, ext.overwrite_original_rules, ext.clash_new_field_name);
     //std::string output_content = YAML::Dump(yamlnode);
-    replaceAll(output_content, "!<str> ", "");
     return beautifyStringTags(std::move(output_content));
 }
 
