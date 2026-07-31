@@ -1819,6 +1819,414 @@ void test_vless_trojan_link_fp_uses_client_fingerprint() {
     }
 }
 
+// Hysteria 系的 fingerprint 是服务器证书指纹（clash 的 fingerprint 键、
+// Surge 的 server-cert-fingerprint-sha256）。此前无测试覆盖，先锁定行为，
+// 以便把它从 Fingerprint 字段迁往 CertFingerprint 时能确认无行为变化。
+void test_hysteria_cert_fingerprint_roundtrip() {
+    const std::string sha256 =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const std::string hy = R"(proxies:
+  - name: hy-node
+    type: hysteria
+    server: h.example.com
+    port: 443
+    auth-str: authpass
+    up: "100 Mbps"
+    down: "100 Mbps"
+    sni: h.example.com
+    fingerprint: )" + sha256 + "\n";
+    const std::string hy2 = R"(proxies:
+  - name: hy2-node
+    type: hysteria2
+    server: h.example.com
+    port: 443
+    password: pass
+    sni: h.example.com
+    fingerprint: )" + sha256 + "\n";
+
+    for (const auto &content : {hy, hy2}) {
+        const Proxy node = parse_clash(content);
+        std::vector<Proxy> nodes{node};
+        std::vector<RulesetContent> rulesets;
+        ProxyGroupConfigs groups;
+        extra_settings ext;
+        ext.nodelist = true;
+        ext.clash_new_field_name = true;
+        const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+        const YAML::Node rt = YAML::Load(exported)["proxies"][0];
+        require(rt["fingerprint"].as<std::string>() == sha256,
+                "hysteria cert fingerprint must round-trip, got:\n" + exported);
+    }
+
+    // Hysteria2 的 Surge 导出走 server-cert-fingerprint-sha256
+    std::vector<Proxy> nodes{parse_clash(hy2)};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    const std::string surge = proxyToSurge(nodes, "", rulesets, groups, 4, ext);
+    require(surge.find("server-cert-fingerprint-sha256=" + sha256) != std::string::npos,
+            "hysteria2 Surge export must keep the cert fingerprint, got:\n" + surge);
+}
+
+// type 缺省或未知都不该丢弃整个节点：mihomo 的 convert/v.go 明确
+// `if network == "" { network = "tcp" }`，其运行时对未知 network 也是
+// `default: // default tcp network`。丢节点会让用户静默少节点且无从排查。
+void test_vless_link_missing_or_unknown_type_falls_back_to_tcp() {
+    struct { const char *link; const char *what; } cases[] = {
+        {"vless://12345678-1234-1234-1234-123456789012@e.example.com:443"
+         "?security=tls&sni=e.example.com#no-type", "missing type"},
+        {"vless://12345678-1234-1234-1234-123456789012@e.example.com:443"
+         "?security=tls&type=futuretransport&sni=e.example.com#unknown-type", "unknown type"},
+    };
+    for (const auto &c : cases) {
+        std::vector<Proxy> nodes;
+        explodeSub(c.link, nodes);
+        require(nodes.size() == 1,
+                std::string(c.what) + ": node must not be dropped");
+        require(nodes[0].Type == ProxyType::VLESS,
+                std::string(c.what) + ": expected a VLESS node");
+        require(nodes[0].TransferProtocol == "tcp",
+                std::string(c.what) + ": must fall back to tcp, got: " + nodes[0].TransferProtocol);
+    }
+}
+
+// Clash 侧同理：未知 network 既不该在解析时丢，也不该在导出时被静默跳过
+void test_clash_unknown_network_falls_back_instead_of_dropping() {
+    const std::string content = R"(proxies:
+  - name: future-net
+    type: vless
+    server: e.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: futuretransport
+)";
+    std::vector<Proxy> nodes;
+    explodeSub(content, nodes);
+    require(nodes.size() == 1, "clash parser must not drop unknown network");
+    require(nodes[0].TransferProtocol == "tcp",
+            "unknown network must fall back to tcp, got: " + nodes[0].TransferProtocol);
+
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("name: future-net") != std::string::npos,
+            "exporter must not silently skip the node, got:\n" + exported);
+    require(exported.find("network: futuretransport") == std::string::npos,
+            "invalid network value must not be emitted, got:\n" + exported);
+}
+
+// xudp 全局开关与节点自身的 packet-encoding 是两个独立来源，此前各自
+// AddMember，rapidjson 不去重，会输出两个同名的 packet_encoding 键
+void test_singbox_packet_encoding_not_duplicated() {
+    std::vector<Proxy> nodes;
+    explodeSub("vless://12345678-1234-1234-1234-123456789012@e.example.com:443"
+               "?security=tls&type=tcp&packet-encoding=packetaddr&sni=e.example.com#pe",
+               nodes);
+    require(nodes.size() == 1, "expected one node");
+
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.udp = true;
+    ext.xudp = true;   // 与节点的 packet-encoding 同时成立
+    const std::string exported = proxyToSingBox(nodes, "", rulesets, groups, ext);
+    const auto first = exported.find("packet_encoding");
+    require(first != std::string::npos, "expected packet_encoding in output");
+    require(exported.find("packet_encoding", first + 1) == std::string::npos,
+            "packet_encoding must appear exactly once, got:\n" + exported);
+}
+
+// Clash 输入的 xhttp-opts.headers 与 download-settings 此前都进不了链接
+void test_clash_xhttp_headers_and_download_exported_to_link() {
+    const std::string content = R"(proxies:
+  - name: xhttp-full
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /up
+      mode: packet-up
+      headers:
+        X-Forwarded-For: 1.2.3.4
+      download-settings:
+        server: dl.example.com
+        port: 8443
+        path: /down
+)";
+    std::vector<Proxy> nodes;
+    explodeSub(content, nodes);
+    require(nodes.size() == 1, "expected one node");
+    require(!nodes[0].XhttpHeaders.empty(), "headers must be parsed");
+    require(!nodes[0].XhttpDownload.empty(), "download-settings must be parsed");
+
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    const std::string extraJson = urlDecode(decoded.substr(decoded.find("extra=") + 6));
+    require(extraJson.find("X-Forwarded-For") != std::string::npos,
+            "xhttp-opts.headers must reach the link extra, got: " + extraJson);
+    require(decoded.find("downloadSettings=") != std::string::npos,
+            "download-settings must reach the link, got: " + decoded);
+}
+
+// Xray 允许把 xhttp 参数直接写在 xhttpSettings 下而不套 extra，
+// 此前只读 host/path/mode/extra/downloadSettings，其余全部丢弃
+void test_xray_xhttp_settings_direct_fields_parsed() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "tlsSettings": {"serverName": "x.example.com", "allowInsecure": true},
+        "xhttpSettings": {
+          "path": "/up",
+          "xPaddingBytes": "100-500",
+          "noGRPCHeader": true,
+          "scMaxEachPostBytes": 500000,
+          "xmux": {"maxConnections": "8"}
+        }
+      }
+    }
+  ]
+})";
+    const Proxy node = parse_v2ray_conf(content);
+    require(node.XhttpPaddingBytes == "100-500",
+            "xhttpSettings.xPaddingBytes must be parsed, got: " + node.XhttpPaddingBytes);
+    require(!node.XhttpNoGrpcHeader.is_undef() && node.XhttpNoGrpcHeader.get(),
+            "xhttpSettings.noGRPCHeader must be parsed");
+    require(node.XhttpScMaxEachPostBytes == "500000",
+            "xhttpSettings.scMaxEachPostBytes must be parsed, got: " + node.XhttpScMaxEachPostBytes);
+    require(node.XhttpReuseSettings.find("max-connections") != std::string::npos,
+            "xhttpSettings.xmux must be parsed, got: " + node.XhttpReuseSettings);
+    require(!node.AllowInsecure.is_undef() && node.AllowInsecure.get(),
+            "tlsSettings.allowInsecure must map to skip-cert-verify");
+}
+
+// mihomo 的 parseXHTTPExtra 接受 sessionPlacement / sessionKey 作为旧别名
+void test_vless_link_extra_legacy_session_aliases() {
+    const Proxy node = parse_link(
+        "vless://12345678-1234-1234-1234-123456789012@x.example.com:443"
+        "?security=tls&type=xhttp&path=%2Fx"
+        "&extra=%7B%22sessionPlacement%22%3A%22query%22%2C%22sessionKey%22%3A%22sk%22%7D#legacy");
+    require(node.XhttpClashOpts.find("\"session-placement\":\"query\"") != std::string::npos,
+            "legacy sessionPlacement must map, got: " + node.XhttpClashOpts);
+    require(node.XhttpClashOpts.find("\"session-key\":\"sk\"") != std::string::npos,
+            "legacy sessionKey must map, got: " + node.XhttpClashOpts);
+}
+
+// download-settings 的 tlsSettings.allowInsecure 同样要映射
+void test_xray_download_settings_allow_insecure() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {
+            "address": "dl.example.com", "port": 443, "security": "tls",
+            "tlsSettings": {"serverName": "dl.example.com", "allowInsecure": true},
+            "xhttpSettings": {"path": "/down"}
+          }
+        }
+      }
+    }
+  ]
+})";
+    const Proxy node = parse_v2ray_conf(content);
+    require(node.XhttpDownload.find("skip-cert-verify") != std::string::npos,
+            "download-settings allowInsecure must map, got: " + node.XhttpDownload);
+}
+
+// mihomo 的 XHTTPDownloadSettings 全部用指针类型，缺失表示"沿用上游"，
+// 显式值（含 false 与空串）表示"覆盖上游"。项目此前用空串表示"没有"，
+// 无法区分二者：security: none 不写 tls，显式 path: "" 也被当成未配置。
+void test_xray_download_settings_explicit_values_preserved() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {
+            "address": "dl.example.com", "port": 443, "security": "none",
+            "xhttpSettings": {"path": "/down"}
+          }
+        }
+      }
+    }
+  ]
+})";
+    const Proxy node = parse_v2ray_conf(content);
+    // security: none 是显式的"下行不加密"，必须落成 tls: false 而非缺失
+    require(node.XhttpDownload.find("\"tls\":false") != std::string::npos,
+            "security: none must become an explicit tls:false, got: " + node.XhttpDownload);
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node ds = YAML::Load(exported)["proxies"][0]["xhttp-opts"]["download-settings"];
+    require(ds["tls"].IsDefined() && !ds["tls"].as<bool>(),
+            "explicit tls:false must survive to clash, got:\n" + exported);
+}
+
+// Clash 侧显式写空的值同样是"覆盖上游为空"，不能退化成缺失
+void test_clash_download_settings_explicit_empty_preserved() {
+    const std::string content = R"(proxies:
+  - name: ds-empty
+    type: vless
+    server: x.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /up
+      host: upstream.example.com
+      download-settings:
+        server: dl.example.com
+        host: ""
+)";
+    const Proxy node = parse_clash(content);
+    require(node.XhttpDownload.find("\"host\":\"\"") != std::string::npos,
+            "explicit empty host must be preserved, got: " + node.XhttpDownload);
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node ds = YAML::Load(exported)["proxies"][0]["xhttp-opts"]["download-settings"];
+    require(ds["host"].IsDefined() && ds["host"].as<std::string>().empty(),
+            "explicit empty host must not degrade into inheriting upstream, got:\n" + exported);
+}
+
+// Xray 的 SplitHTTPConfig.Build()：extra 存在时把它整个反序列化成新配置，
+// 只把外层 host/path/mode 覆盖回去，其余外层直写字段一律忽略。
+// 逐键合并会让本该被忽略的外层字段重新生效，与运行语义不符。
+void test_xray_xhttp_extra_replaces_outer_fields() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "host": "outer.example.com",
+          "mode": "packet-up",
+          "xPaddingBytes": "999-999",
+          "scMaxEachPostBytes": 111,
+          "extra": {"xPaddingBytes": "100-500"}
+        }
+      }
+    }
+  ]
+})";
+    const Proxy node = parse_v2ray_conf(content);
+    // extra 里的值生效
+    require(node.XhttpPaddingBytes == "100-500",
+            "extra.xPaddingBytes must win, got: " + node.XhttpPaddingBytes);
+    // 外层直写字段在 extra 存在时应被整体忽略
+    require(node.XhttpScMaxEachPostBytes.empty(),
+            "outer scMaxEachPostBytes must be ignored when extra exists, got: " +
+                node.XhttpScMaxEachPostBytes);
+    // host/path/mode 仍从外层保留
+    require(node.Host == "outer.example.com" && node.Path == "/up" && node.XhttpMode == "packet-up",
+            "outer host/path/mode must survive");
+}
+
+// 无 extra 时，直写字段全部生效，包括 headers 与 session 旧别名
+void test_xray_xhttp_direct_headers_and_legacy_aliases() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "headers": {"X-Forwarded-For": "1.2.3.4"},
+          "sessionPlacement": "query",
+          "sessionKey": "sk",
+          "xPaddingBytes": "100-500"
+        }
+      }
+    }
+  ]
+})";
+    const Proxy node = parse_v2ray_conf(content);
+    require(node.XhttpHeaders.find("X-Forwarded-For") != std::string::npos,
+            "direct headers must reach XhttpHeaders, got: " + node.XhttpHeaders);
+    require(node.XhttpClashOpts.find("\"session-placement\":\"query\"") != std::string::npos,
+            "direct legacy sessionPlacement must map, got: " + node.XhttpClashOpts);
+    require(node.XhttpClashOpts.find("\"session-key\":\"sk\"") != std::string::npos,
+            "direct legacy sessionKey must map, got: " + node.XhttpClashOpts);
+    require(node.XhttpPaddingBytes == "100-500", "direct xPaddingBytes must still work");
+}
+
+// Xray 的 security 缺失或空串都明确表示无 TLS，不存在"未指定"。
+// 转成 mihomo 时必须落成显式 tls:false，否则会被当作"继承上游"。
+void test_xray_download_settings_missing_security_means_no_tls() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {
+            "address": "dl.example.com", "port": 443,
+            "xhttpSettings": {"path": "/down"}
+          }
+        }
+      }
+    }
+  ]
+})";
+    const Proxy node = parse_v2ray_conf(content);
+    require(node.XhttpDownload.find("\"tls\":false") != std::string::npos,
+            "missing security must become explicit tls:false, got: " + node.XhttpDownload);
+}
+
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
 // 平铺的 public-key/short-id 会被 mihomo 静默忽略导致下行丢失 reality 配置
 void test_clash_xhttp_download_settings_reality_opts_nested() {
@@ -2557,6 +2965,19 @@ int main() {
         test_anytls_fingerprint_semantics_separated();
         test_anytls_link_fp_and_hpkp_separated();
         test_vless_trojan_link_fp_uses_client_fingerprint();
+        test_hysteria_cert_fingerprint_roundtrip();
+        test_vless_link_missing_or_unknown_type_falls_back_to_tcp();
+        test_clash_unknown_network_falls_back_instead_of_dropping();
+        test_singbox_packet_encoding_not_duplicated();
+        test_clash_xhttp_headers_and_download_exported_to_link();
+        test_xray_xhttp_settings_direct_fields_parsed();
+        test_vless_link_extra_legacy_session_aliases();
+        test_xray_download_settings_allow_insecure();
+        test_xray_xhttp_extra_replaces_outer_fields();
+        test_xray_xhttp_direct_headers_and_legacy_aliases();
+        test_xray_download_settings_missing_security_means_no_tls();
+        test_xray_download_settings_explicit_values_preserved();
+        test_clash_download_settings_explicit_empty_preserved();
         test_quanx_export_skips_vless_xhttp_node();
         test_proxy_group_toml_extras_preserve_scalar_types();
         test_proxy_group_trailing_provider_is_not_treated_as_extra();

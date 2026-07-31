@@ -121,9 +121,13 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
         if (p > 0) out.AddMember("port", p, alloc);
     }
 
+    // mihomo 的 XHTTPDownloadSettings.TLS 是 *bool：缺失表示沿用上游，
+    // 显式 false 才是"下行不加密"。security 存在即为显式声明。
+    // Xray 的 security 缺失或为空串都明确表示无 TLS（StreamConfig.Build 的
+    // `case "", "none"` 同一分支），不存在"未指定"。故无条件写出显式布尔，
+    // 否则 mihomo 侧会把缺失当成"继承上游 TLS"。
     std::string security = GetMember(d, "security");
-    if (security == "tls" || security == "reality")
-        out.AddMember("tls", true, alloc);
+    out.AddMember("tls", security == "tls" || security == "reality", alloc);
 
     const char *tlsKey = (security == "reality") ? "realitySettings" : "tlsSettings";
     if (d.HasMember(tlsKey) && d[tlsKey].IsObject()) {
@@ -134,6 +138,8 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
         std::string fp = GetMember(ts, "fingerprint");
         if (!fp.empty())
             out.AddMember("client-fingerprint", rapidjson::Value(fp.c_str(), alloc), alloc);
+        if (ts.HasMember("allowInsecure") && ts["allowInsecure"].IsBool())
+            out.AddMember("skip-cert-verify", ts["allowInsecure"].GetBool(), alloc);
         if (ts.HasMember("alpn") && ts["alpn"].IsArray()) {
             rapidjson::Value alpnArr(rapidjson::kArrayType);
             for (const auto &a : ts["alpn"].GetArray())
@@ -280,13 +286,16 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
     if (!sid.empty())
         out.AddMember("short-id", rapidjson::Value(sid.c_str(), alloc), alloc);
 
-    node["path"] >>= path;
-    if (!path.empty())
+    // 键存在即为显式覆盖（哪怕值为空串）；键缺失才表示沿用上游参数
+    if (node["path"].IsDefined()) {
+        node["path"] >>= path;
         out.AddMember("path", rapidjson::Value(path.c_str(), alloc), alloc);
+    }
 
-    node["host"] >>= host;
-    if (!host.empty())
+    if (node["host"].IsDefined()) {
+        node["host"] >>= host;
         out.AddMember("host", rapidjson::Value(host.c_str(), alloc), alloc);
+    }
 
     if (node["headers"].IsDefined() && node["headers"].IsMap()) {
         rapidjson::Value hdrs(rapidjson::kObjectType);
@@ -351,6 +360,38 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
     return buf.GetString();
 }
 
+// Xray 的 SplitHTTPConfig.Build()：extra 存在时整个反序列化成新配置，只把外层
+// host/path/mode 覆盖回去，其余外层直写字段一律忽略；extra 不存在时才用外层字段。
+// 这里据此产出一份"等价 extra"，供后续统一按 extra 键名映射。
+static std::string buildXhttpEffectiveExtra(const rapidjson::Value &xs, const std::string &extra) {
+    // extra 存在即为全量配置，外层其余字段按 Xray 语义丢弃
+    if (!extra.empty()) {
+        rapidjson::Document ed;
+        ed.Parse(extra.data());
+        if (!ed.HasParseError() && ed.IsObject())
+            return extra;
+    }
+    // 无 extra：整份 xhttpSettings 即等价 extra，去掉外层单独处理的键
+    rapidjson::Document merged;
+    merged.SetObject();
+    auto &alloc = merged.GetAllocator();
+    static const char *outerKeys[] = {"host", "path", "mode", "extra", "downloadSettings"};
+    for (const auto &kv : xs.GetObject()) {
+        bool skip = false;
+        for (const char *k : outerKeys)
+            if (std::string(kv.name.GetString()) == k) { skip = true; break; }
+        if (skip)
+            continue;
+        merged.AddMember(rapidjson::Value(kv.name, alloc), rapidjson::Value(kv.value, alloc), alloc);
+    }
+    if (merged.ObjectEmpty())
+        return "";
+    rapidjson::StringBuffer buf;
+    rapidjson::Writer<rapidjson::StringBuffer> w(buf);
+    merged.Accept(w);
+    return buf.GetString();
+}
+
 static void assignXhttpFields(Proxy &node, const std::string &mode, const std::string &extra,
                               const std::string &download_settings) {
     node.XhttpMode = mode;
@@ -363,6 +404,12 @@ static void assignXhttpFields(Proxy &node, const std::string &mode, const std::s
             GetMember(d, "xPaddingBytes", node.XhttpPaddingBytes);
             if (d.HasMember("noGRPCHeader") && d["noGRPCHeader"].IsBool())
                 node.XhttpNoGrpcHeader = d["noGRPCHeader"].GetBool();
+            if (d.HasMember("headers") && d["headers"].IsObject() && !d["headers"].ObjectEmpty()) {
+                rapidjson::StringBuffer hbuf;
+                rapidjson::Writer<rapidjson::StringBuffer> hw(hbuf);
+                d["headers"].Accept(hw);
+                node.XhttpHeaders = hbuf.GetString();
+            }
             // scMaxEachPostBytes / xmux → 顶层 sc-max-each-post-bytes / reuse-settings，
             // 使 clash 导出不再依赖 extra 原样保留
             if (d.HasMember("scMaxEachPostBytes")) {
@@ -387,9 +434,17 @@ static void assignXhttpFields(Proxy &node, const std::string &mode, const std::s
             co.SetObject();
             auto &ca = co.GetAllocator();
             for (const auto &f : XHTTP_DOC_FIELDS) {
-                if (!d.HasMember(f.xray))
-                    continue;
-                const auto &v = d[f.xray];
+                // mihomo 的 parseXHTTPExtra 接受两个旧别名，此处一并兼容
+                const char *key = f.xray;
+                if (!d.HasMember(key)) {
+                    const std::string alias = std::string(f.xray) == "sessionIDPlacement"
+                                                  ? "sessionPlacement"
+                                                  : (std::string(f.xray) == "sessionIDKey" ? "sessionKey" : "");
+                    if (alias.empty() || !d.HasMember(alias.c_str()))
+                        continue;
+                    key = d.FindMember(alias.c_str())->name.GetString();
+                }
+                const auto &v = d[key];
                 if (f.type == XhttpFieldType::Bool && v.IsBool())
                     co.AddMember(rapidjson::Value(f.mihomo, ca), rapidjson::Value(v.GetBool()), ca);
                 else if (v.IsString() && v.GetStringLength() > 0)
@@ -635,7 +690,7 @@ void hysteriaConstruct(Proxy &node, const std::string &group, const std::string 
     node.Ports = ports;
     node.ServerName = sni;
     // 新增 mihomo 参数
-    node.Fingerprint = fingerprint;
+    node.CertFingerprint = fingerprint;
     node.Ca = ca;
     node.CaStr = ca_str;
     node.RecvWindowConn = recv_window_conn;
@@ -710,8 +765,7 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
     node.TLSSecure = tls == "tls" || tls == "xtls" || tls == "reality";
     node.PublicKey = pbk;
     node.ShortId = sid;
-    // fp= 是 uTLS 浏览器指纹，只存 ClientFingerprint；
-    // Fingerprint 专职服务器证书指纹，不再混存
+    // fp= 是 uTLS 浏览器指纹，只存 ClientFingerprint
     node.ClientFingerprint = fp;
     node.ServerName = sni;
     node.AlpnList = alpnList;
@@ -787,7 +841,7 @@ void hysteria2Construct(Proxy &node, const std::string &group, const std::string
     node.Ports = ports;
     // 新增 mihomo 参数
     node.Mport = mport;
-    node.Fingerprint = fingerprint;
+    node.CertFingerprint = fingerprint;
     node.Ca = ca;
     node.CaStr = ca_str;
     node.CWND = cwnd;
@@ -979,6 +1033,10 @@ void explodeVmessConf(std::string content, std::vector<Proxy> &nodes) {
                         path = settings ? GetMember(*settings, "path") : "";
                         xhttp_mode = settings ? GetMember(*settings, "mode") : "";
                         xhttp_extra = settings ? getJsonMemberPreserve(*settings, "extra") : "";
+                        // Xray 允许参数直接写在 xhttpSettings 下而不套 extra，
+                        // 合成为等价 extra 交给同一套映射处理（extra 中的同名键优先）
+                        if (settings)
+                            xhttp_extra = buildXhttpEffectiveExtra(*settings, xhttp_extra);
                         xhttp_download_settings = settings ? getJsonMemberPreserve(*settings, "downloadSettings") : "";
                     }
                 }
@@ -1729,8 +1787,6 @@ void explodeNetch(std::string netch, Proxy &node) {
                 group = SNELL_DEFAULT_GROUP;
             snellConstruct(node, group, remark, address, port, password, obfs, host, to_int(aid, 0), udp, tfo, scv);
             break;
-        default:
-            return;
     }
 }
 
@@ -2178,7 +2234,9 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         edge.clear();
                         break;
                     default:
-                        continue;
+                        // 未知 network 回退 tcp，不丢节点（理由同链接解析）
+                        net = "tcp";
+                        break;
                 }
 
                 tls = safe_as<std::string>(singleproxy["tls"]) == "true" ? "tls" : "";
@@ -2461,10 +2519,9 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 continue;
         }
 
-        // TLS 证书类字段：mihomo 的 VlessOption/VmessOption/TrojanOption 都有。
-        // fingerprint 是服务器证书 pinning（SHA256），与 client-fingerprint 的 uTLS
-        // 指纹语义不同，故存进专用的 CertFingerprint——Fingerprint 在这几条路径上
-        // 承载的是客户端指纹，还被链接的 fp= 与 sing-box 的 utls.fingerprint 消费。
+        // TLS 证书类字段：mihomo 的 VlessOption/VmessOption/TrojanOption/AnyTLSOption
+        // 都有。fingerprint 是服务器证书 pinning（SHA256），与 client-fingerprint 的
+        // uTLS 浏览器指纹是两个独立字段，切勿混用。
         // 放在 construct 之后赋值，避免被构造函数覆盖。
         switch (node.Type) {
             case ProxyType::VLESS:
@@ -2680,7 +2737,13 @@ void explodeStdVless(std::string vless, Proxy &node) {
     if (strFind(encryption, "%"))
         encryption = urlDecode(encryption);
     std::vector<std::string> alpnList = getUrlAlpnList(addition);
+    // 缺省 type 按分享链接惯例视为 tcp（mihomo convert/v.go 同样是
+    // `if network == "" { network = "tcp" }`）；未知 type 也回退而不是丢弃整个
+    // 节点——mihomo 运行时对未知 network 同为 `default: // default tcp network`。
     switch (hash_(net)) {
+        default:
+            net = "tcp";
+            [[fallthrough]];
         case "tcp"_hash:
         case "ws"_hash:
         case "h2"_hash:
@@ -2722,8 +2785,6 @@ void explodeStdVless(std::string vless, Proxy &node) {
             host = getUrlArg(addition, strFind(addition, "sni") ? "sni" : "quicSecurity");
             path = getUrlArg(addition, "key");
             break;
-        default:
-            return;
     }
     if (remarks.empty())
         remarks = add + ":" + port;

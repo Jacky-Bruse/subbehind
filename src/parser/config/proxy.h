@@ -208,7 +208,6 @@ struct Proxy {
     uint32_t UpSpeed = 0;
     uint32_t DownSpeed = 0;
     String Insecure;
-    String Fingerprint;
     String OBFSPassword;
     String Ca;
     String CaStr;
@@ -286,8 +285,8 @@ struct Proxy {
     String InterfaceName;     // interface-name
     int RoutingMark = 0;      // routing-mark，0 即未配置（与 mihomo 的 omitempty 一致）
     // 服务器证书指纹校验（mihomo 的 fingerprint，SHA256 十六进制）。
-    // 不能复用上面的 Fingerprint：那个字段在 vless/trojan/anytls 路径上实际承载的是
-    // 客户端指纹，还被链接导出的 fp= 和 sing-box 的 utls.fingerprint 消费。
+    // 与 ClientFingerprint（uTLS 浏览器指纹）是两回事，切勿混用：mihomo 的
+    // NewFingerprintVerifier 见到浏览器名会直接报错拒绝节点。
     String CertFingerprint;
 
     // ===== WebSocket =====

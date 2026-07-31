@@ -313,6 +313,89 @@ static void addMihomoTlsOptsToYaml(const rapidjson::Value &d, YAML::Node out) {
     }
 }
 
+// Mihomo canonical download JSON → Xray downloadSettings（链接 downloadSettings= 用）。
+// 与 xrayDownloadToMihomoJson 互为逆向：address/port/security/tlsSettings/
+// realitySettings/xhttpSettings 的结构以 Xray 的 StreamConfig 为准。
+static std::string mihomoDownloadToXrayJson(const std::string &download_json) {
+    if (download_json.empty())
+        return "";
+    rapidjson::Document d;
+    d.Parse(download_json.data());
+    if (d.HasParseError() || !d.IsObject())
+        return "";
+
+    rapidjson::Document out;
+    out.SetObject();
+    auto &alloc = out.GetAllocator();
+
+    std::string server = GetMember(d, "server");
+    if (!server.empty())
+        out.AddMember("address", rapidjson::Value(server.c_str(), alloc), alloc);
+    if (d.HasMember("port") && d["port"].IsInt())
+        out.AddMember("port", d["port"].GetInt(), alloc);
+
+    const bool hasReality = !GetMember(d, "public-key").empty();
+    const bool tlsOn = d.HasMember("tls") && d["tls"].IsBool() && d["tls"].GetBool();
+    const char *security = hasReality ? "reality" : (tlsOn ? "tls" : "none");
+    out.AddMember("security", rapidjson::Value(security, alloc), alloc);
+
+    rapidjson::Value ts(rapidjson::kObjectType);
+    std::string sn = GetMember(d, "servername");
+    if (!sn.empty())
+        ts.AddMember("serverName", rapidjson::Value(sn.c_str(), alloc), alloc);
+    std::string cfp = GetMember(d, "client-fingerprint");
+    if (!cfp.empty())
+        ts.AddMember("fingerprint", rapidjson::Value(cfp.c_str(), alloc), alloc);
+    if (d.HasMember("skip-cert-verify") && d["skip-cert-verify"].IsBool())
+        ts.AddMember("allowInsecure", d["skip-cert-verify"].GetBool(), alloc);
+    if (d.HasMember("alpn") && d["alpn"].IsArray() && !d["alpn"].Empty())
+        ts.AddMember("alpn", rapidjson::Value(d["alpn"], alloc), alloc);
+    if (hasReality) {
+        ts.AddMember("publicKey", rapidjson::Value(GetMember(d, "public-key").c_str(), alloc), alloc);
+        std::string sid = GetMember(d, "short-id");
+        if (!sid.empty())
+            ts.AddMember("shortId", rapidjson::Value(sid.c_str(), alloc), alloc);
+    }
+    if (!ts.ObjectEmpty())
+        out.AddMember(rapidjson::Value(hasReality ? "realitySettings" : "tlsSettings", alloc), ts, alloc);
+
+    rapidjson::Value xs(rapidjson::kObjectType);
+    std::string path = GetMember(d, "path");
+    if (!path.empty())
+        xs.AddMember("path", rapidjson::Value(path.c_str(), alloc), alloc);
+    std::string host = GetMember(d, "host");
+    if (!host.empty())
+        xs.AddMember("host", rapidjson::Value(host.c_str(), alloc), alloc);
+    if (d.HasMember("headers") && d["headers"].IsObject() && !d["headers"].ObjectEmpty())
+        xs.AddMember("headers", rapidjson::Value(d["headers"], alloc), alloc);
+    if (d.HasMember("reuse-settings") && d["reuse-settings"].IsObject()) {
+        const auto &rs = d["reuse-settings"];
+        rapidjson::Value xmux(rapidjson::kObjectType);
+        static const struct { const char *mihomo; const char *xray; } reuseMap[] = {
+            {"max-connections", "maxConnections"}, {"max-concurrency", "maxConcurrency"},
+            {"c-max-reuse-times", "cMaxReuseTimes"}, {"h-max-request-times", "hMaxRequestTimes"},
+            {"h-max-reusable-secs", "hMaxReusableSecs"},
+        };
+        for (const auto &f : reuseMap) {
+            if (rs.HasMember(f.mihomo) && rs[f.mihomo].IsString() && rs[f.mihomo].GetStringLength() > 0)
+                xmux.AddMember(rapidjson::Value(f.xray, alloc),
+                               rapidjson::Value(rs[f.mihomo].GetString(), alloc), alloc);
+        }
+        // hKeepAlivePeriod 在 Xray 是裸 int64，无字符串反序列化
+        if (rs.HasMember("h-keep-alive-period") && rs["h-keep-alive-period"].IsString())
+            xmux.AddMember("hKeepAlivePeriod", atoi(rs["h-keep-alive-period"].GetString()), alloc);
+        if (!xmux.ObjectEmpty())
+            xs.AddMember("xmux", xmux, alloc);
+    }
+    if (!xs.ObjectEmpty())
+        out.AddMember("xhttpSettings", xs, alloc);
+
+    rapidjson::StringBuffer buf;
+    rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
+    out.Accept(writer);
+    return buf.GetString();
+}
+
 // Export Mihomo canonical download JSON to xhttp-opts.download-settings YAML node
 static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_json) {
     if (download_json.empty())
@@ -350,12 +433,11 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
         setYamlString(ds["reality-opts"]["short-id"], sid, true);
     if (d.HasMember("support-x25519mlkem768") && d["support-x25519mlkem768"].IsBool())
         ds["reality-opts"]["support-x25519mlkem768"] = d["support-x25519mlkem768"].GetBool();
-    std::string path = GetMember(d, "path");
-    if (!path.empty())
-        ds["path"] = path;
-    std::string host = GetMember(d, "host");
-    if (!host.empty())
-        ds["host"] = host;
+    // 存在即写出（含空串），与解析侧的"显式覆盖 vs 沿用上游"语义保持一致
+    if (d.HasMember("path") && d["path"].IsString())
+        ds["path"] = std::string(d["path"].GetString());
+    if (d.HasMember("host") && d["host"].IsString())
+        ds["host"] = std::string(d["host"].GetString());
     if (d.HasMember("headers") && d["headers"].IsObject() && !d["headers"].ObjectEmpty()) {
         for (const auto &kv : d["headers"].GetObject())
             ds["headers"][kv.name.GetString()] = std::string(kv.value.GetString());
@@ -744,8 +826,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.OBFSParam.empty())
                     singleproxy["obfs"] = x.OBFSParam;
                 // 新增 mihomo 参数输出
-                if (!x.Fingerprint.empty())
-                    singleproxy["fingerprint"] = x.Fingerprint;
+                if (!x.CertFingerprint.empty())
+                    singleproxy["fingerprint"] = x.CertFingerprint;
                 if (!x.Ca.empty())
                     singleproxy["ca"] = x.Ca;
                 if (!x.CaStr.empty())
@@ -787,8 +869,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 // mport 非 mihomo 字段：端口跳跃由上方 ports 输出，此处仅在 ports 缺省时补为合法 ports
                 if (x.Ports.empty() && !x.Mport.empty())
                     singleproxy["ports"] = x.Mport;
-                if (!x.Fingerprint.empty())
-                    singleproxy["fingerprint"] = x.Fingerprint;
+                if (!x.CertFingerprint.empty())
+                    singleproxy["fingerprint"] = x.CertFingerprint;
                 if (!x.Ca.empty())
                     singleproxy["ca"] = x.Ca;
                 if (x.CWND > 0)
@@ -932,8 +1014,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                         x.SupportX25519MLKEM768.get();
                 // 客户端指纹（uTLS）：显式设置时始终输出（含非 Reality 的普通 TLS 节点）；
                 // Reality 节点（有 public-key）即使未显式设置也需默认 random，否则 mihomo uTLS 无法握手。
-                // 不再从 Fingerprint 回退：所有 VLESS 构造路径都会设置 ClientFingerprint，
-                // 该回退是死代码，且会暗示证书指纹可以当 uTLS 指纹用
+                // 只认 ClientFingerprint：证书指纹另有 CertFingerprint 承载，
+                // 二者混用会让 mihomo 的 uTLS 拿到无效的指纹名
                 if (!x.ClientFingerprint.empty()) {
                     singleproxy["client-fingerprint"] = x.ClientFingerprint;
                 } else if (!x.PublicKey.empty()) {
@@ -1075,9 +1157,12 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                         addXhttpDownloadToYaml(singleproxy["xhttp-opts"], x.XhttpDownload);
                         break;
                     default:
-                        writeLog(0, "Skipping VLESS node '" + x.Remark + "': unsupported network '" +
-                                    x.TransferProtocol + "'", LOG_LEVEL_WARNING);
-                        continue;
+                        // 回退为 tcp 而非丢弃：mihomo 运行时对未知 network 也是
+                        // default 分支当 tcp 处理，丢节点会让用户静默少节点
+                        writeLog(0, "VLESS node '" + x.Remark + "': unsupported network '" +
+                                    x.TransferProtocol + "', falling back to tcp", LOG_LEVEL_WARNING);
+                        singleproxy["network"] = "tcp";
+                        break;
                 }
                 break;
             default:
@@ -1516,8 +1601,8 @@ std::string proxyToSurge(std::vector<Proxy> &nodes, const std::string &base_conf
 
                 if (!scv.is_undef())
                     proxy += ",skip-cert-verify=" + std::string(scv.get() ? "true" : "false");
-                if (!x.Fingerprint.empty())
-                    proxy += ",server-cert-fingerprint-sha256=" + x.Fingerprint;
+                if (!x.CertFingerprint.empty())
+                    proxy += ",server-cert-fingerprint-sha256=" + x.CertFingerprint;
                 if (!x.ServerName.empty())
                     proxy += ",sni=" + x.ServerName;
                 if (!x.Ports.empty())
@@ -1798,7 +1883,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                 if (extraToExport.empty() &&
                                     (!x.XhttpScMaxEachPostBytes.empty() || !x.XhttpReuseSettings.empty() ||
                                      !x.XhttpClashOpts.empty() || !x.XhttpNoGrpcHeader.is_undef() ||
-                                     !x.XhttpPaddingBytes.empty())) {
+                                     !x.XhttpPaddingBytes.empty() || !x.XhttpHeaders.empty())) {
                                     rapidjson::Document ed;
                                     ed.SetObject();
                                     auto &ea = ed.GetAllocator();
@@ -1814,6 +1899,12 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                     if (!x.XhttpPaddingBytes.empty())
                                         ed.AddMember("xPaddingBytes",
                                                      rapidjson::Value(x.XhttpPaddingBytes.c_str(), ea), ea);
+                                    if (!x.XhttpHeaders.empty()) {
+                                        rapidjson::Document hd;
+                                        hd.Parse(x.XhttpHeaders.data());
+                                        if (!hd.HasParseError() && hd.IsObject() && !hd.ObjectEmpty())
+                                            ed.AddMember("headers", rapidjson::Value(hd, ea), ea);
+                                    }
                                     if (!x.XhttpReuseSettings.empty()) {
                                         rapidjson::Document rd;
                                         rd.Parse(x.XhttpReuseSettings.data());
@@ -1884,8 +1975,15 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                 if (!extraToExport.empty())
                                     addVlessParam("extra", urlEncode(extraToExport));
                             }
-                            if (!x.XhttpDownloadSettings.empty())
-                                addVlessParam("downloadSettings", urlEncode(x.XhttpDownloadSettings));
+                            {
+                                // Xray 输入的原样透传优先；Clash 输入只有 canonical
+                                // JSON，需反向转成 Xray 结构才能进链接
+                                std::string ds = x.XhttpDownloadSettings;
+                                if (ds.empty())
+                                    ds = mihomoDownloadToXrayJson(x.XhttpDownload);
+                                if (!ds.empty())
+                                    addVlessParam("downloadSettings", urlEncode(ds));
+                            }
                             break;
                         case "quic"_hash:
                             addVlessParam("headerType", fake_type);
@@ -3255,15 +3353,17 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json,
             case ProxyType::VLESS: {
                 addSingBoxCommonMembers(proxy, x, "vless", allocator);
                 proxy.AddMember("uuid", rapidjson::StringRef(x.UserId.c_str()), allocator);
-                if (xudp && udp)
+                // 节点自身的 packet-encoding 优先；缺省时才用全局 xudp 开关。
+                // 两者各写一次会产生重复的 packet_encoding 键（rapidjson 不去重）
+                if (!x.PacketEncoding.empty())
+                    proxy.AddMember("packet_encoding",
+                                    rapidjson::StringRef(x.PacketEncoding.c_str()), allocator);
+                else if (xudp && udp)
                     proxy.AddMember("packet_encoding", rapidjson::StringRef("xudp"), allocator);
                 if (!x.Flow.empty())
                     proxy.AddMember("flow", rapidjson::StringRef(x.Flow.c_str()), allocator);
                 if (!x.Encryption.empty() && x.Encryption != "none")
                     proxy.AddMember("encryption", rapidjson::StringRef(x.Encryption.c_str()), allocator);
-                if (!x.PacketEncoding.empty()) {
-                    proxy.AddMember("packet_encoding", rapidjson::StringRef(x.PacketEncoding.c_str()), allocator);
-                }
                 rapidjson::Value vlesstransport(rapidjson::kObjectType);
                 rapidjson::Value vlessheaders(rapidjson::kObjectType);
                 switch (hash_(x.TransferProtocol)) {
