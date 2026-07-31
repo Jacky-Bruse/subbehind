@@ -657,12 +657,16 @@ void test_xray_download_settings_xmux_and_sc_max() {
             "xray scMaxEachPostBytes must be dropped: mihomo download-settings has no such field");
     require(exported.find("reuse-settings:") != std::string::npos,
             "expected download-settings.reuse-settings from xray xmux");
-    require(exported.find("max-connections: 16-32") != std::string::npos,
-            "expected reuse-settings.max-connections from xray xmux.maxConnections");
-    require(exported.find("h-max-reusable-secs: 1800-3000") != std::string::npos,
-            "expected reuse-settings.h-max-reusable-secs from xray xmux.hMaxReusableSecs");
-    require(exported.find("h-keep-alive-period: 30") != std::string::npos,
-            "expected reuse-settings.h-keep-alive-period from xray xmux.hKeepAlivePeriod");
+    {
+        const YAML::Node rs =
+            YAML::Load(exported)["proxies"][0]["xhttp-opts"]["download-settings"]["reuse-settings"];
+        require(rs["max-connections"].as<std::string>() == "16-32",
+                "expected reuse-settings.max-connections from xray xmux.maxConnections");
+        require(rs["h-max-reusable-secs"].as<std::string>() == "1800-3000",
+                "expected reuse-settings.h-max-reusable-secs from xray xmux.hMaxReusableSecs");
+        require(rs["h-keep-alive-period"].as<std::string>() == "30",
+                "expected reuse-settings.h-keep-alive-period from xray xmux.hKeepAlivePeriod");
+    }
 }
 
 void test_clash_vless_xhttp_download_settings_full() {
@@ -715,7 +719,8 @@ void test_clash_vless_xhttp_download_settings_full() {
             "download-settings must not carry no-grpc-header (not a mihomo field)");
     require(exported.find("reuse-settings:") != std::string::npos,
             "expected download-settings.reuse-settings to be exported");
-    require(exported.find("max-connections: 8") != std::string::npos,
+    require(YAML::Load(exported)["proxies"][0]["xhttp-opts"]["download-settings"]
+                ["reuse-settings"]["max-connections"].as<std::string>() == "8",
             "expected download-settings.reuse-settings.max-connections to be exported");
     require(exported.find("skip-cert-verify: 0") != std::string::npos ||
             exported.find("skip-cert-verify: false") != std::string::npos,
@@ -2331,6 +2336,104 @@ void test_xray_download_settings_passthrough_untouched() {
             "passthrough content must stay intact, got: " + extraJson);
 }
 
+// mihomo 的 XHTTPDownloadSettings 全部是指针字段：缺失=沿用主连接，
+// 显式值（含空串、空对象）=覆盖。canonical JSON 用成员存在性承载这一语义，
+// 四个转换方向都必须守恒，否则显式空会退化成缺失而错误继承上游。
+void test_download_settings_explicit_empty_all_fields_preserved() {
+    const std::string content = R"(proxies:
+  - name: ds-empty-all
+    type: vless
+    server: main.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    servername: sni.example.com
+    client-fingerprint: chrome
+    network: xhttp
+    xhttp-opts:
+      path: /up
+      download-settings:
+        host: ""
+        servername: ""
+        client-fingerprint: ""
+        fingerprint: ""
+        name-cert-verify: ""
+)";
+    const Proxy node = parse_clash(content);
+    for (const char *k : {"host", "servername", "client-fingerprint",
+                          "fingerprint", "name-cert-verify"}) {
+        require(node.XhttpDownload.find(std::string("\"") + k + "\":\"\"") != std::string::npos,
+                std::string("explicit empty ") + k + " must be preserved, got: " + node.XhttpDownload);
+    }
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node ds = YAML::Load(exported)["proxies"][0]["xhttp-opts"]["download-settings"];
+    for (const char *k : {"host", "servername", "client-fingerprint",
+                          "fingerprint", "name-cert-verify"}) {
+        require(ds[k].IsDefined() && ds[k].as<std::string>().empty(),
+                std::string("explicit empty ") + k + " must survive to clash, got:\n" + exported);
+    }
+}
+
+// reality-opts 的三种状态必须可区分：
+// 无该键=沿用主连接；空对象或空 public-key=清除继承（mihomo 的
+// RealityOptions.Parse 在 PublicKey 为空时返回 nil）；有值=覆盖
+void test_download_settings_reality_opts_three_states() {
+    auto build = [](const char *dsBody) {
+        return std::string(R"(proxies:
+  - name: ds-reality
+    type: vless
+    server: main.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    reality-opts:
+      public-key: parent-pbk
+      short-id: aabb
+    xhttp-opts:
+      path: /up
+      download-settings:
+)") + dsBody;
+    };
+
+    // 状态一：无 reality-opts → canonical 不含该成员（沿用主连接）
+    const Proxy inherit = parse_clash(build("        path: /down\n"));
+    require(inherit.XhttpDownload.find("reality-opts") == std::string::npos,
+            "absent reality-opts must stay absent, got: " + inherit.XhttpDownload);
+
+    // 状态二：空 public-key → 显式清除，canonical 必须保留该对象
+    const Proxy cleared = parse_clash(build("        reality-opts:\n          public-key: \"\"\n"));
+    require(cleared.XhttpDownload.find("reality-opts") != std::string::npos,
+            "reality-opts clearing override must be preserved, got: " + cleared.XhttpDownload);
+
+    // 状态三：有值 → 覆盖
+    const Proxy override = parse_clash(build("        reality-opts:\n          public-key: dl-pbk\n"));
+    require(override.XhttpDownload.find("dl-pbk") != std::string::npos,
+            "reality-opts override must be preserved, got: " + override.XhttpDownload);
+
+    // 清除语义要贯通到 Xray 侧：不得再继承主连接的 reality
+    std::vector<Proxy> nodes{cleared};
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    auto pos = decoded.find("extra=");
+    auto end = decoded.find_first_of("&#", pos);
+    if (end == std::string::npos) end = decoded.size();
+    const std::string extraJson = urlDecode(decoded.substr(pos + 6, end - pos - 6));
+    rapidjson::Document d;
+    d.Parse(extraJson.data());
+    require(!d.HasParseError() && d.HasMember("downloadSettings"), "expected downloadSettings");
+    require(std::string(d["downloadSettings"]["security"].GetString()) != "reality",
+            "cleared reality must not inherit the parent's, got: " + extraJson);
+}
+
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
 // 平铺的 public-key/short-id 会被 mihomo 静默忽略导致下行丢失 reality 配置
 void test_clash_xhttp_download_settings_reality_opts_nested() {
@@ -3077,6 +3180,8 @@ int main() {
         test_xray_xhttp_settings_direct_fields_parsed();
         test_vless_link_extra_legacy_session_aliases();
         test_xray_download_settings_allow_insecure();
+        test_download_settings_explicit_empty_all_fields_preserved();
+        test_download_settings_reality_opts_three_states();
         test_clash_download_settings_to_link_is_complete_stream_config();
         test_xray_download_settings_passthrough_untouched();
         test_xray_xhttp_extra_replaces_outer_fields();

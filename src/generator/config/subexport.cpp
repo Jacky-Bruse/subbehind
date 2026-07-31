@@ -269,8 +269,9 @@ static void addExtraNumericOrRange(rapidjson::Document &obj, const char *key,
 // ponytail: 首字符像数字起始就一律锚定，宁可多一个引号也不漏判；
 // 副作用只是 "1abc" 这类值也带上引号，无害。
 static bool yamlNeedsStringTag(const std::string &v) {
+    // 空串无需锚定：yaml-cpp 本就把它输出成 ""，再套一层会变成 """"
     if (v.empty())
-        return true;
+        return false;
     const std::string lower = toLower(v);
     if (lower == "true" || lower == "false" || lower == "null" || lower == "~" ||
         lower == "yes" || lower == "no" || lower == "on" || lower == "off")
@@ -303,9 +304,9 @@ static void jsonObjToYamlMap(const rapidjson::Value &obj, YAML::Node out) {
 
 // name-cert-verify 与 ech/shadow-tls/restls/jls-opts 写回 YAML（主节点与 download-settings 共用）
 static void addMihomoTlsOptsToYaml(const rapidjson::Value &d, YAML::Node out) {
-    std::string ncv = GetMember(d, "name-cert-verify");
-    if (!ncv.empty())
-        out["name-cert-verify"] = ncv;
+    // 成员存在即为显式覆盖，含空串
+    if (d.HasMember("name-cert-verify") && d["name-cert-verify"].IsString())
+        setYamlString(out["name-cert-verify"], d["name-cert-verify"].GetString());
     for (const char *k : MIHOMO_TLS_OPT_KEYS) {
         // 注意传 out[k]：未绑定的空 Node 按值传入后赋值不会回传到父树
         if (d.HasMember(k) && d[k].IsObject() && !d[k].ObjectEmpty())
@@ -425,7 +426,9 @@ static std::string mihomoDownloadToXrayJson(const Proxy &x, const std::string &d
     return buf.GetString();
 }
 
-// Export Mihomo canonical download JSON to xhttp-opts.download-settings YAML node
+// Export Mihomo canonical download JSON to xhttp-opts.download-settings YAML node.
+// canonical 里成员存在即为显式覆盖（含空串、空对象），必须原样写出；
+// 成员缺失才表示沿用主连接，此时不写该键。
 static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_json) {
     if (download_json.empty())
         return;
@@ -435,72 +438,61 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
         return;
 
     YAML::Node ds;
-    std::string server = GetMember(d, "server");
-    if (!server.empty())
-        ds["server"] = server;
+    auto emitString = [&](const char *key) {
+        if (d.HasMember(key) && d[key].IsString())
+            setYamlString(ds[key], d[key].GetString());
+    };
+
+    emitString("server");
     if (d.HasMember("port") && d["port"].IsInt())
         ds["port"] = d["port"].GetInt();
     if (d.HasMember("tls") && d["tls"].IsBool())
         ds["tls"] = d["tls"].GetBool();
-    std::string sn = GetMember(d, "servername");
-    if (!sn.empty())
-        ds["servername"] = sn;
+    emitString("servername");
     if (d.HasMember("alpn") && d["alpn"].IsArray()) {
         for (const auto &a : d["alpn"].GetArray())
             ds["alpn"].push_back(std::string(a.GetString()));
     }
-    std::string fp = GetMember(d, "client-fingerprint");
-    if (!fp.empty())
-        ds["client-fingerprint"] = fp;
-    // mihomo 的 XHTTPDownloadSettings 里 reality 参数嵌套在 reality-opts 下，
-    // 平铺写出会被 mihomo 解码器静默忽略，导致下行丢失 reality 配置
-    std::string pbk = GetMember(d, "public-key");
-    if (!pbk.empty())
-        ds["reality-opts"]["public-key"] = pbk;
-    std::string sid = GetMember(d, "short-id");
-    if (!sid.empty())
-        setYamlString(ds["reality-opts"]["short-id"], sid, true);
-    if (d.HasMember("support-x25519mlkem768") && d["support-x25519mlkem768"].IsBool())
-        ds["reality-opts"]["support-x25519mlkem768"] = d["support-x25519mlkem768"].GetBool();
-    // 存在即写出（含空串），与解析侧的"显式覆盖 vs 沿用上游"语义保持一致
-    if (d.HasMember("path") && d["path"].IsString())
-        ds["path"] = std::string(d["path"].GetString());
-    if (d.HasMember("host") && d["host"].IsString())
-        ds["host"] = std::string(d["host"].GetString());
-    if (d.HasMember("headers") && d["headers"].IsObject() && !d["headers"].ObjectEmpty()) {
-        for (const auto &kv : d["headers"].GetObject())
-            ds["headers"][kv.name.GetString()] = std::string(kv.value.GetString());
+    emitString("client-fingerprint");
+
+    if (d.HasMember("reality-opts") && d["reality-opts"].IsObject()) {
+        const auto &ro = d["reality-opts"];
+        if (ro.HasMember("public-key") && ro["public-key"].IsString())
+            setYamlString(ds["reality-opts"]["public-key"], ro["public-key"].GetString());
+        if (ro.HasMember("short-id") && ro["short-id"].IsString())
+            setYamlString(ds["reality-opts"]["short-id"], ro["short-id"].GetString(), true);
+        if (ro.HasMember("support-x25519mlkem768") && ro["support-x25519mlkem768"].IsBool())
+            ds["reality-opts"]["support-x25519mlkem768"] = ro["support-x25519mlkem768"].GetBool();
+        // 显式空对象同样是"清除继承"的有效覆盖，必须写出
+        if (!ds["reality-opts"].IsDefined())
+            ds["reality-opts"] = YAML::Node(YAML::NodeType::Map);
     }
-    // no-grpc-header/x-padding-bytes/sc-max-each-post-bytes 不写出：
-    // mihomo 的 XHTTPDownloadSettings 没有这些字段（旧 canonical JSON 里的残留一并忽略）
+
+    emitString("path");
+    emitString("host");
+    if (d.HasMember("headers") && d["headers"].IsObject()) {
+        for (const auto &kv : d["headers"].GetObject())
+            setYamlString(ds["headers"][kv.name.GetString()], kv.value.GetString());
+        if (!ds["headers"].IsDefined())
+            ds["headers"] = YAML::Node(YAML::NodeType::Map);
+    }
 
     if (d.HasMember("reuse-settings") && d["reuse-settings"].IsObject()) {
         const auto &rs = d["reuse-settings"];
-        YAML::Node rsYaml;
-        const char *reuseKeys[] = {"max-connections", "max-concurrency", "c-max-reuse-times",
-                                   "h-max-request-times", "h-max-reusable-secs", "h-keep-alive-period"};
-        for (const char *k : reuseKeys) {
-            if (rs.HasMember(k) && rs[k].IsString() && rs[k].GetStringLength() > 0)
-                rsYaml[k] = std::string(rs[k].GetString());
+        for (const char *k : {"max-connections", "max-concurrency", "c-max-reuse-times",
+                              "h-max-request-times", "h-max-reusable-secs", "h-keep-alive-period"}) {
+            if (rs.HasMember(k) && rs[k].IsString())
+                setYamlString(ds["reuse-settings"][k], rs[k].GetString());
         }
-        if (rsYaml.IsDefined())
-            ds["reuse-settings"] = rsYaml;
+        if (!ds["reuse-settings"].IsDefined())
+            ds["reuse-settings"] = YAML::Node(YAML::NodeType::Map);
     }
 
     if (d.HasMember("skip-cert-verify") && d["skip-cert-verify"].IsBool())
         ds["skip-cert-verify"] = d["skip-cert-verify"].GetBool();
-
-    std::string tlsFingerprint = GetMember(d, "fingerprint");
-    if (!tlsFingerprint.empty())
-        ds["fingerprint"] = tlsFingerprint;
-
-    std::string certificate = GetMember(d, "certificate");
-    if (!certificate.empty())
-        ds["certificate"] = certificate;
-
-    std::string privateKey = GetMember(d, "private-key");
-    if (!privateKey.empty())
-        ds["private-key"] = privateKey;
+    emitString("fingerprint");
+    emitString("certificate");
+    emitString("private-key");
 
     addMihomoTlsOptsToYaml(d, ds);
 

@@ -147,12 +147,14 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
             out.AddMember("alpn", alpnArr, alloc);
         }
         if (security == "reality") {
+            // canonical 用嵌套对象表达 reality 三态，与 Clash 侧保持一致
+            rapidjson::Value ro(rapidjson::kObjectType);
             std::string pbk = GetMember(ts, "publicKey");
-            if (!pbk.empty())
-                out.AddMember("public-key", rapidjson::Value(pbk.c_str(), alloc), alloc);
+            ro.AddMember("public-key", rapidjson::Value(pbk.c_str(), alloc), alloc);
             std::string sid = GetMember(ts, "shortId");
             if (!sid.empty())
-                out.AddMember("short-id", rapidjson::Value(sid.c_str(), alloc), alloc);
+                ro.AddMember("short-id", rapidjson::Value(sid.c_str(), alloc), alloc);
+            out.AddMember("reality-opts", ro, alloc);
         }
     }
 
@@ -160,12 +162,11 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
     const char *xhttpKey = "xhttpSettings";
     if (d.HasMember(xhttpKey) && d[xhttpKey].IsObject()) {
         const auto &xs = d[xhttpKey];
-        std::string path = GetMember(xs, "path");
-        if (!path.empty())
-            out.AddMember("path", rapidjson::Value(path.c_str(), alloc), alloc);
-        std::string host = GetMember(xs, "host");
-        if (!host.empty())
-            out.AddMember("host", rapidjson::Value(host.c_str(), alloc), alloc);
+        // 成员存在即为显式覆盖，含空串
+        if (xs.HasMember("path") && xs["path"].IsString())
+            out.AddMember("path", rapidjson::Value(xs["path"], alloc), alloc);
+        if (xs.HasMember("host") && xs["host"].IsString())
+            out.AddMember("host", rapidjson::Value(xs["host"], alloc), alloc);
         if (xs.HasMember("headers") && xs["headers"].IsObject() && !xs["headers"].ObjectEmpty())
             out.AddMember("headers", rapidjson::Value(xs["headers"], alloc), alloc);
         // noGRPCHeader/xPaddingBytes/scMaxEachPostBytes 不落 canonical：
@@ -218,10 +219,12 @@ static rapidjson::Value yamlFlatMapToJson(const Node &node, rapidjson::Document:
 // name-cert-verify + ech/shadow-tls/restls/jls-opts → JSON object（主节点与 download-settings 共用）
 static void addMihomoTlsOpts(const Node &node, rapidjson::Document &out,
                              rapidjson::Document::AllocatorType &alloc) {
-    std::string ncv;
-    node["name-cert-verify"] >>= ncv;
-    if (!ncv.empty())
+    // 键存在即为显式覆盖（含空串），缺失才表示沿用上游
+    if (node["name-cert-verify"].IsDefined() && !node["name-cert-verify"].IsNull()) {
+        std::string ncv;
+        node["name-cert-verify"] >>= ncv;
         out.AddMember("name-cert-verify", rapidjson::Value(ncv.c_str(), alloc), alloc);
+    }
     for (const char *k : MIHOMO_TLS_OPT_KEYS) {
         if (node[k].IsDefined() && node[k].IsMap()) {
             rapidjson::Value sub = yamlFlatMapToJson(node[k], alloc);
@@ -231,7 +234,11 @@ static void addMihomoTlsOpts(const Node &node, rapidjson::Document &out,
     }
 }
 
-// Convert Clash YAML download-settings node to Mihomo canonical JSON
+// Convert Clash YAML download-settings node to Mihomo canonical JSON.
+// mihomo 的 XHTTPDownloadSettings 全是指针字段：键缺失=沿用主连接，键存在=覆盖
+//（哪怕值为空串或空对象）。canonical JSON 以"成员是否存在"承载该语义，因此这里
+// 一律按 IsDefined() 判定，不能用 !empty()——否则显式空会退化成缺失。
+// YAML 的 null 视为未设置。
 static std::string clashDownloadToMihomoJson(const Node &node) {
     if (!node.IsDefined() || !node.IsMap())
         return "";
@@ -240,116 +247,94 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
     out.SetObject();
     auto &alloc = out.GetAllocator();
 
-    std::string server, servername, fingerprint, path, host;
-    node["server"] >>= server;
-    if (!server.empty())
-        out.AddMember("server", rapidjson::Value(server.c_str(), alloc), alloc);
+    auto present = [&node](const char *key) {
+        return node[key].IsDefined() && !node[key].IsNull();
+    };
+    auto copyString = [&](const char *key) {
+        if (!present(key))
+            return;
+        std::string v;
+        node[key] >>= v;
+        out.AddMember(rapidjson::Value(key, alloc), rapidjson::Value(v.c_str(), alloc), alloc);
+    };
+    auto copyBool = [&](const char *key) {
+        if (present(key))
+            out.AddMember(rapidjson::Value(key, alloc),
+                          rapidjson::Value(safe_as<std::string>(node[key]) == "true"), alloc);
+    };
+    auto copyMap = [&](const char *key) {
+        if (!present(key) || !node[key].IsMap())
+            return;
+        rapidjson::Value obj(rapidjson::kObjectType);
+        for (const auto &kv : node[key]) {
+            std::string k = kv.first.as<std::string>();
+            std::string v = kv.second.as<std::string>();
+            obj.AddMember(rapidjson::Value(k.c_str(), alloc),
+                          rapidjson::Value(v.c_str(), alloc), alloc);
+        }
+        out.AddMember(rapidjson::Value(key, alloc), obj, alloc);
+    };
 
-    if (node["port"].IsDefined()) {
+    copyString("server");
+    if (present("port")) {
         int port = safe_as<int>(node["port"]);
-        if (port > 0) out.AddMember("port", port, alloc);
+        if (port > 0)
+            out.AddMember("port", port, alloc);
     }
+    copyBool("tls");
+    copyString("servername");
 
-    if (node["tls"].IsDefined()) {
-        bool tls = safe_as<std::string>(node["tls"]) == "true";
-        out.AddMember("tls", tls, alloc);
-    }
-
-    node["servername"] >>= servername;
-    if (!servername.empty())
-        out.AddMember("servername", rapidjson::Value(servername.c_str(), alloc), alloc);
-
-    if (node["alpn"].IsDefined() && node["alpn"].IsSequence()) {
+    if (present("alpn") && node["alpn"].IsSequence()) {
         rapidjson::Value alpnArr(rapidjson::kArrayType);
         for (const auto &a : node["alpn"])
             alpnArr.PushBack(rapidjson::Value(a.as<std::string>().c_str(), alloc), alloc);
         out.AddMember("alpn", alpnArr, alloc);
     }
 
-    node["client-fingerprint"] >>= fingerprint;
-    if (!fingerprint.empty())
-        out.AddMember("client-fingerprint", rapidjson::Value(fingerprint.c_str(), alloc), alloc);
+    copyString("client-fingerprint");
 
-    // mihomo 的 XHTTPDownloadSettings 里 reality 参数嵌套在 reality-opts 下
-    // （canonical JSON 内部仍保持平铺的 public-key/short-id）
-    std::string pbk, sid;
-    if (node["reality-opts"].IsDefined() && node["reality-opts"].IsMap()) {
-        node["reality-opts"]["public-key"] >>= pbk;
-        node["reality-opts"]["short-id"] >>= sid;
-        if (node["reality-opts"]["support-x25519mlkem768"].IsDefined())
-            out.AddMember("support-x25519mlkem768",
-                          safe_as<std::string>(
-                              node["reality-opts"]["support-x25519mlkem768"]) == "true", alloc);
-    }
-    if (!pbk.empty())
-        out.AddMember("public-key", rapidjson::Value(pbk.c_str(), alloc), alloc);
-    if (!sid.empty())
-        out.AddMember("short-id", rapidjson::Value(sid.c_str(), alloc), alloc);
-
-    // 键存在即为显式覆盖（哪怕值为空串）；键缺失才表示沿用上游参数
-    if (node["path"].IsDefined()) {
-        node["path"] >>= path;
-        out.AddMember("path", rapidjson::Value(path.c_str(), alloc), alloc);
-    }
-
-    if (node["host"].IsDefined()) {
-        node["host"] >>= host;
-        out.AddMember("host", rapidjson::Value(host.c_str(), alloc), alloc);
-    }
-
-    if (node["headers"].IsDefined() && node["headers"].IsMap()) {
-        rapidjson::Value hdrs(rapidjson::kObjectType);
-        bool hasHeaders = false;
-        for (const auto &kv : node["headers"]) {
-            std::string k = kv.first.as<std::string>();
-            std::string v = kv.second.as<std::string>();
-            hdrs.AddMember(rapidjson::Value(k.c_str(), alloc), rapidjson::Value(v.c_str(), alloc), alloc);
-            hasHeaders = true;
-        }
-        if (hasHeaders)
-            out.AddMember("headers", hdrs, alloc);
-    }
-
-    // no-grpc-header/x-padding-bytes/sc-max-each-post-bytes 不读取：
-    // mihomo 的 XHTTPDownloadSettings 没有这些字段
-
-    if (node["reuse-settings"].IsDefined() && node["reuse-settings"].IsMap()) {
-        rapidjson::Value rsObj(rapidjson::kObjectType);
-        bool hasReuse = false;
-        const auto &rs = node["reuse-settings"];
-        const char *reuseKeys[] = {"max-connections", "max-concurrency", "c-max-reuse-times",
-                                   "h-max-request-times", "h-max-reusable-secs", "h-keep-alive-period"};
-        for (const char *k : reuseKeys) {
-            std::string val;
-            rs[k] >>= val;
-            if (!val.empty()) {
-                rsObj.AddMember(rapidjson::Value(k, alloc), rapidjson::Value(val.c_str(), alloc), alloc);
-                hasReuse = true;
+    // reality-opts 用对象存在性区分三态：无=沿用主连接，空/空 public-key=清除
+    // 继承（mihomo 的 RealityOptions.Parse 在 PublicKey 为空时返回 nil），有值=覆盖
+    if (present("reality-opts") && node["reality-opts"].IsMap()) {
+        rapidjson::Value ro(rapidjson::kObjectType);
+        const auto &src = node["reality-opts"];
+        for (const char *k : {"public-key", "short-id"}) {
+            if (src[k].IsDefined() && !src[k].IsNull()) {
+                std::string v;
+                src[k] >>= v;
+                ro.AddMember(rapidjson::Value(k, alloc), rapidjson::Value(v.c_str(), alloc), alloc);
             }
         }
-        if (hasReuse)
-            out.AddMember("reuse-settings", rsObj, alloc);
+        if (src["support-x25519mlkem768"].IsDefined())
+            ro.AddMember("support-x25519mlkem768",
+                         rapidjson::Value(safe_as<std::string>(src["support-x25519mlkem768"]) == "true"), alloc);
+        out.AddMember("reality-opts", ro, alloc);
     }
 
-    if (node["skip-cert-verify"].IsDefined()) {
-        bool scv = safe_as<std::string>(node["skip-cert-verify"]) == "true";
-        out.AddMember("skip-cert-verify", scv, alloc);
+    copyString("path");
+    copyString("host");
+    copyMap("headers");
+
+    if (present("reuse-settings") && node["reuse-settings"].IsMap()) {
+        rapidjson::Value rsObj(rapidjson::kObjectType);
+        const auto &rs = node["reuse-settings"];
+        for (const char *k : {"max-connections", "max-concurrency", "c-max-reuse-times",
+                              "h-max-request-times", "h-max-reusable-secs", "h-keep-alive-period"}) {
+            if (rs[k].IsDefined() && !rs[k].IsNull()) {
+                std::string val;
+                rs[k] >>= val;
+                rsObj.AddMember(rapidjson::Value(k, alloc), rapidjson::Value(val.c_str(), alloc), alloc);
+            }
+        }
+        out.AddMember("reuse-settings", rsObj, alloc);
     }
+
+    copyBool("skip-cert-verify");
+    copyString("fingerprint");
+    copyString("certificate");
+    copyString("private-key");
 
     addMihomoTlsOpts(node, out, alloc);
-
-    std::string tlsFingerprint;
-    node["fingerprint"] >>= tlsFingerprint;
-    if (!tlsFingerprint.empty())
-        out.AddMember("fingerprint", rapidjson::Value(tlsFingerprint.c_str(), alloc), alloc);
-
-    std::string certificate, privateKey;
-    node["certificate"] >>= certificate;
-    if (!certificate.empty())
-        out.AddMember("certificate", rapidjson::Value(certificate.c_str(), alloc), alloc);
-    node["private-key"] >>= privateKey;
-    if (!privateKey.empty())
-        out.AddMember("private-key", rapidjson::Value(privateKey.c_str(), alloc), alloc);
 
     if (out.ObjectEmpty())
         return "";
