@@ -1974,8 +1974,9 @@ void test_clash_xhttp_headers_and_download_exported_to_link() {
     const std::string extraJson = urlDecode(decoded.substr(decoded.find("extra=") + 6));
     require(extraJson.find("X-Forwarded-For") != std::string::npos,
             "xhttp-opts.headers must reach the link extra, got: " + extraJson);
-    require(decoded.find("downloadSettings=") != std::string::npos,
-            "download-settings must reach the link, got: " + decoded);
+    // downloadSettings 位于 extra 内（mihomo 的 convert 只读 extra["downloadSettings"]）
+    require(extraJson.find("\"downloadSettings\"") != std::string::npos,
+            "download-settings must reach the link extra, got: " + extraJson);
 }
 
 // Xray 允许把 xhttp 参数直接写在 xhttpSettings 下而不套 extra，
@@ -2225,6 +2226,109 @@ void test_xray_download_settings_missing_security_means_no_tls() {
     const Proxy node = parse_v2ray_conf(content);
     require(node.XhttpDownload.find("\"tls\":false") != std::string::npos,
             "missing security must become explicit tls:false, got: " + node.XhttpDownload);
+}
+
+// 从 mihomo 生成 Xray downloadSettings 时必须产出完整的独立 StreamConfig：
+// Xray 的 StreamConfig.Build() 默认 ProtocolName="tcp"，只有显式 network 才切换；
+// 且 Xray 不像 mihomo 那样用 lo.FromPtrOr 从父连接继承，缺失字段必须先物化。
+// 位置也必须在 extra 内——mihomo 的 convert 只读 extra["downloadSettings"]。
+void test_clash_download_settings_to_link_is_complete_stream_config() {
+    const std::string content = R"(proxies:
+  - name: ds-complete
+    type: vless
+    server: main.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    servername: sni.example.com
+    client-fingerprint: chrome
+    network: xhttp
+    xhttp-opts:
+      path: /up
+      download-settings:
+        path: /down
+)";
+    std::vector<Proxy> nodes;
+    explodeSub(content, nodes);
+    require(nodes.size() == 1, "expected one node");
+
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    auto pos = decoded.find("extra=");
+    require(pos != std::string::npos, "expected extra= in link");
+    auto end = decoded.find_first_of("&#", pos);
+    if (end == std::string::npos) end = decoded.size();
+    const std::string extraJson = urlDecode(decoded.substr(pos + 6, end - pos - 6));
+
+    // 顶层参数 mihomo 读不到，必须在 extra 内
+    require(decoded.find("&downloadSettings=") == std::string::npos,
+            "downloadSettings must not be a top-level param, got: " + decoded);
+
+    rapidjson::Document d;
+    d.Parse(extraJson.data());
+    require(!d.HasParseError() && d.IsObject(), "extra must be valid JSON: " + extraJson);
+    require(d.HasMember("downloadSettings") && d["downloadSettings"].IsObject(),
+            "extra.downloadSettings must exist, got: " + extraJson);
+    const auto &ds = d["downloadSettings"];
+
+    // 缺 network 会让 Xray 用默认的 tcp，xhttpSettings 形同虚设
+    require(ds.HasMember("network") && std::string(ds["network"].GetString()) == "xhttp",
+            "downloadSettings must declare network=xhttp, got: " + extraJson);
+    // 未在 download-settings 里覆盖的字段，必须物化父连接的值
+    require(ds.HasMember("address") && std::string(ds["address"].GetString()) == "main.example.com",
+            "address must be materialised from the parent, got: " + extraJson);
+    require(ds.HasMember("port") && ds["port"].GetInt() == 443,
+            "port must be materialised from the parent, got: " + extraJson);
+    require(ds.HasMember("security") && std::string(ds["security"].GetString()) == "tls",
+            "parent tls must materialise into security=tls, not none, got: " + extraJson);
+    require(ds.HasMember("tlsSettings") &&
+                std::string(ds["tlsSettings"]["serverName"].GetString()) == "sni.example.com",
+            "parent servername must be materialised, got: " + extraJson);
+    // download-settings 自身的覆盖值仍要生效
+    require(ds.HasMember("xhttpSettings") &&
+                std::string(ds["xhttpSettings"]["path"].GetString()) == "/down",
+            "download-settings.path must override, got: " + extraJson);
+}
+
+// 原始 Xray downloadSettings 是原样透传，不得擅自补 network，
+// 否则会改变原配置的默认网络行为
+void test_xray_download_settings_passthrough_untouched() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {"address": "dl.example.com", "port": 8443, "security": "none"}
+        }
+      }
+    }
+  ]
+})";
+    std::vector<Proxy> nodes{parse_v2ray_conf(content)};
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    auto pos = decoded.find("extra=");
+    require(pos != std::string::npos, "expected extra= in link");
+    auto end = decoded.find_first_of("&#", pos);
+    if (end == std::string::npos) end = decoded.size();
+    const std::string extraJson = urlDecode(decoded.substr(pos + 6, end - pos - 6));
+
+    rapidjson::Document d;
+    d.Parse(extraJson.data());
+    require(!d.HasParseError() && d.IsObject(), "extra must be valid JSON: " + extraJson);
+    require(d.HasMember("downloadSettings"), "passthrough downloadSettings must survive");
+    require(!d["downloadSettings"].HasMember("network"),
+            "passthrough must not gain a synthesised network, got: " + extraJson);
+    require(std::string(d["downloadSettings"]["address"].GetString()) == "dl.example.com",
+            "passthrough content must stay intact, got: " + extraJson);
 }
 
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
@@ -2973,6 +3077,8 @@ int main() {
         test_xray_xhttp_settings_direct_fields_parsed();
         test_vless_link_extra_legacy_session_aliases();
         test_xray_download_settings_allow_insecure();
+        test_clash_download_settings_to_link_is_complete_stream_config();
+        test_xray_download_settings_passthrough_untouched();
         test_xray_xhttp_extra_replaces_outer_fields();
         test_xray_xhttp_direct_headers_and_legacy_aliases();
         test_xray_download_settings_missing_security_means_no_tls();
