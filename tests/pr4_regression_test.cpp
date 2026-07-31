@@ -848,12 +848,60 @@ void test_clash_xhttp_doc_fields_exported_to_link_extra() {
         {"\"seqKey\"", "\"seq\""},
         {"\"uplinkDataPlacement\"", "\"header\""},
         {"\"uplinkDataKey\"", "\"chunk\""},
-        {"\"uplinkChunkSize\"", "\"4096\""},
-        {"\"scMinPostsIntervalMs\"", "\"25\""},
+        // mihomo 的 parseXHTTPExtra 对这两个断言 .(float64)，字符串会被静默丢弃
+        {"\"uplinkChunkSize\"", "4096"},
+        {"\"scMinPostsIntervalMs\"", "25"},
     };
     for (const auto &kv : expected)
         require(extraJson.find(std::string(kv.first) + ":" + kv.second) != std::string::npos,
                 std::string("extra must contain ") + kv.first + ":" + kv.second);
+}
+
+// x-padding-bytes 必须随 extra 出链接：顶层 x_padding_bytes 不是链接规范，
+// mihomo 的 convert 只读 path/host/mode 三个顶层参数，且 xPaddingBytes 断言 .(string)。
+// 数值型字段则要按形态定型——纯数字走数字，范围只能留字符串。
+void test_clash_xhttp_padding_and_range_exported_to_link_extra() {
+    const std::string content = R"(proxies:
+  - name: xhttp-padding-out
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /xhttp
+      mode: packet-up
+      x-padding-bytes: "100-500"
+      sc-max-each-post-bytes: "1000000-2000000"
+      uplink-chunk-size: "3072"
+)";
+    std::vector<Proxy> nodes;
+    explodeSub(content, nodes);
+    require(nodes.size() == 1, "expected one node");
+    require(nodes[0].XhttpPaddingBytes == "100-500", "x-padding-bytes must be parsed");
+
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    require(decoded.find("extra=") != std::string::npos, "expected link to contain extra=");
+    auto extraEnd = decoded.find_first_of("&#", decoded.find("extra="));
+    if (extraEnd == std::string::npos)
+        extraEnd = decoded.size();
+    const std::string extraJson =
+        urlDecode(decoded.substr(decoded.find("extra=") + 6, extraEnd - decoded.find("extra=") - 6));
+
+    require(extraJson.find("\"xPaddingBytes\":\"100-500\"") != std::string::npos,
+            "x-padding-bytes must reach extra as a string, got: " + extraJson);
+    // 范围值留字符串（mihomo 收不了范围，但 Xray 的 Int32Range 能解析）
+    require(extraJson.find("\"scMaxEachPostBytes\":\"1000000-2000000\"") != std::string::npos,
+            "range sc-max-each-post-bytes must stay a string, got: " + extraJson);
+    // 单值走数字，否则 mihomo 的 .(float64) 断言失败而丢弃
+    require(extraJson.find("\"uplinkChunkSize\":3072") != std::string::npos,
+            "single-value uplink-chunk-size must be numeric, got: " + extraJson);
+    // 顶层参数不该出现，它不是链接规范
+    require(decoded.find("x_padding_bytes=") == std::string::npos,
+            "x_padding_bytes must not be emitted as a top-level param, got: " + decoded);
 }
 
 // 反方向：链接 extra 里的 Xray 驼峰字段要翻译成 clash 的 xhttp-opts 键
@@ -911,7 +959,7 @@ void test_clash_vless_tls_layer_opts_roundtrip() {
       version-hint: tls13
     jls-opts:
       password: jpw
-      iv: jiv
+      username: juser
 )";
 
     std::vector<Proxy> nodes{parse_clash(content)};
@@ -939,8 +987,8 @@ void test_clash_vless_tls_layer_opts_roundtrip() {
             "restls-opts.version-hint must round-trip");
     require(p["jls-opts"]["password"].as<std::string>() == "jpw",
             "jls-opts.password must round-trip");
-    require(p["jls-opts"]["iv"].as<std::string>() == "jiv",
-            "jls-opts.iv must round-trip");
+    require(p["jls-opts"]["username"].as<std::string>() == "juser",
+            "jls-opts.username must round-trip");
 }
 
 // download-settings 的 proxy 部分同样要透传这五个 TLS 键
@@ -1132,6 +1180,643 @@ void test_vless_link_extra_scmax_xmux_mapped_to_clash() {
             "extra.xmux.maxConnections must reach clash reuse-settings");
     require(opts["reuse-settings"]["h-keep-alive-period"].as<std::string>() == "30",
             "extra.xmux.hKeepAlivePeriod must reach clash reuse-settings");
+}
+
+// 形似布尔/数字的字符串标量必须在两侧都守住类型：
+// 输入侧按形状猜类型会把 "0123" 变成 123（丢前导零）、"true" 变成布尔；
+// 输出侧 yaml-cpp 写字符串不加引号，裸标量被 mihomo 读回时同样变形。
+// mihomo 的 decodeString 无 bool→string 分支，密码变布尔会让整个节点解析失败。
+void test_clash_string_scalars_keep_string_type() {
+    const std::string content = R"(proxies:
+  - name: type-hazard
+    type: vless
+    server: t.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+    shadow-tls-opts:
+      password: "0123"
+      version: 3
+    jls-opts:
+      username: "true"
+      password: "0123456789"
+    restls-opts:
+      password: normalpass
+    ech-opts:
+      enable: true
+      config: ECHBASE64
+)";
+    const Proxy node = parse_clash(content);
+    // 输入侧：带引号的标量是明确的字符串意图，不得按形状改写
+    require(node.MihomoTlsOpts.find("\"0123\"") != std::string::npos,
+            "quoted 0123 must stay a JSON string, got: " + node.MihomoTlsOpts);
+    require(node.MihomoTlsOpts.find("\"username\":\"true\"") != std::string::npos,
+            "quoted true must stay a JSON string, got: " + node.MihomoTlsOpts);
+    // 无引号的才按 YAML 语义定型
+    require(node.MihomoTlsOpts.find("\"version\":3") != std::string::npos,
+            "unquoted 3 must stay a JSON number, got: " + node.MihomoTlsOpts);
+    require(node.MihomoTlsOpts.find("\"enable\":true") != std::string::npos,
+            "unquoted true must stay a JSON bool, got: " + node.MihomoTlsOpts);
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+
+    // 输出侧：往返后仍须是字符串。Tag 为 "?" 表示裸标量，会被 mihomo 读成数字/布尔
+    const YAML::Node rt = YAML::Load(exported)["proxies"][0];
+    const std::pair<std::string, std::string> mustStayString[] = {
+        {"shadow-tls-opts|password", "0123"},
+        {"jls-opts|username", "true"},
+        {"jls-opts|password", "0123456789"},
+    };
+    for (const auto &c : mustStayString) {
+        const auto bar = c.first.find('|');
+        const YAML::Node v = rt[c.first.substr(0, bar)][c.first.substr(bar + 1)];
+        require(v.as<std::string>() == c.second,
+                c.first + " value must survive, got: " + v.as<std::string>());
+        require(v.Tag() != "?",
+                c.first + " must round-trip as an anchored string, not a bare scalar");
+    }
+    // 真布尔/真数字不得被引号化，否则 mihomo 的 decodeBool 无 string 分支会报错
+    require(rt["ech-opts"]["enable"].Tag() == "?" && rt["ech-opts"]["enable"].as<bool>(),
+            "ech-opts.enable must stay a plain YAML bool");
+    require(rt["shadow-tls-opts"]["version"].Tag() == "?" &&
+            rt["shadow-tls-opts"]["version"].as<int>() == 3,
+            "shadow-tls-opts.version must stay a plain YAML int");
+    // 无歧义的字符串不该被无谓锚定，避免输出到处是引号
+    require(rt["restls-opts"]["password"].Tag() == "?" &&
+            rt["restls-opts"]["password"].as<std::string>() == "normalpass",
+            "unambiguous strings must stay plain");
+    // 锚定标签是内部手段，不得泄漏到最终输出
+    require(exported.find("!<str>") == std::string::npos,
+            "internal !<str> tag must be beautified away, got:\n" + exported);
+}
+
+// flow 风格下被锚定值的边界是 ',' 与 '}' 而非换行，美化不得越界吞掉后续键。
+// 这是 short-id 旧实现出过的 bug，换成通用机制后必须保持不回归。
+void test_clash_string_anchor_beautify_in_flow_style() {
+    const std::string content = R"(proxies:
+  - name: flow-style
+    type: vless
+    server: t.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+    reality-opts:
+      public-key: pbk
+      short-id: "11223344"
+    jls-opts:
+      password: "0123"
+      username: after-anchor
+)";
+    std::vector<Proxy> nodes{parse_clash(content)};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    ext.clash_proxies_style = "compact";
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+
+    require(exported.find("!<str>") == std::string::npos,
+            "flow style must not leak the internal tag, got:\n" + exported);
+    const YAML::Node rt = YAML::Load(exported)["proxies"][0];
+    require(rt["reality-opts"]["short-id"].as<std::string>() == "11223344",
+            "short-id must survive beautification in flow style");
+    require(rt["jls-opts"]["password"].as<std::string>() == "0123",
+            "anchored value must survive beautification in flow style");
+    // 被锚定值之后的键不得被吞掉
+    require(rt["jls-opts"]["username"].as<std::string>() == "after-anchor",
+            "key following an anchored value must not be swallowed");
+}
+
+// 敏感字段（密码类）走同一套锚定机制，纯数字密码不得被读成数字
+void test_clash_password_numeric_keeps_string_type() {
+    std::vector<Proxy> nodes;
+    explodeSub("ss://YWVzLTEyOC1nY206MDEyMw@ss.example.com:443#numeric-pass", nodes);
+    require(nodes.size() == 1, "expected one ss node");
+    require(nodes[0].Password == "0123", "expected password 0123 from base64 userinfo");
+
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node rt = YAML::Load(exported)["proxies"][0];
+    require(rt["password"].as<std::string>() == "0123", "numeric password value must survive");
+    require(rt["password"].Tag() != "?",
+            "numeric password must round-trip as an anchored string");
+}
+
+// global-padding / authenticated-length 是 VMess AEAD 的特性：mihomo 的 VmessOption
+// 和 sing-box 的 VMessOutboundOptions 都有，VlessOption 与 sing-box VLESS 都没有，
+// VLESS 协议本身也无此概念。此前这两个字段被错接在 VLESS 路径上，VMess 反而没有。
+void test_clash_vmess_padding_and_auth_length_roundtrip() {
+    const std::string content = R"(proxies:
+  - name: vmess-aead
+    type: vmess
+    server: v.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    alterId: 0
+    cipher: auto
+    network: ws
+    global-padding: true
+    authenticated-length: true
+)";
+    const Proxy node = parse_clash(content);
+    require(node.Type == ProxyType::VMess, "expected VMess node");
+    require(!node.GlobalPadding.is_undef() && node.GlobalPadding.get(),
+            "vmess global-padding must be parsed");
+    require(!node.AuthenticatedLength.is_undef() && node.AuthenticatedLength.get(),
+            "vmess authenticated-length must be parsed");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node rt = YAML::Load(exported)["proxies"][0];
+    require(rt["global-padding"].as<bool>(), "vmess global-padding must be exported");
+    require(rt["authenticated-length"].as<bool>(), "vmess authenticated-length must be exported");
+}
+
+// sing-box 的 VMess outbound 用 global_padding / authenticated_length 承载同一能力
+void test_singbox_vmess_padding_and_auth_length() {
+    const std::string content = R"({
+  "inbounds": [],
+  "outbounds": [
+    {
+      "type": "vmess",
+      "tag": "vmess-aead",
+      "server": "v.example.com",
+      "server_port": 443,
+      "uuid": "12345678-1234-1234-1234-123456789012",
+      "alter_id": 0,
+      "security": "auto",
+      "global_padding": true,
+      "authenticated_length": true
+    }
+  ],
+  "route": {}
+})";
+    const Proxy node = parse_singbox(content);
+    require(node.Type == ProxyType::VMess, "expected VMess node");
+    require(!node.GlobalPadding.is_undef() && node.GlobalPadding.get(),
+            "sing-box global_padding must be parsed");
+    require(!node.AuthenticatedLength.is_undef() && node.AuthenticatedLength.get(),
+            "sing-box authenticated_length must be parsed");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    const std::string exported = proxyToSingBox(nodes, "", rulesets, groups, ext);
+    require(exported.find("\"global_padding\":true") != std::string::npos,
+            "sing-box export must emit global_padding");
+    require(exported.find("\"authenticated_length\":true") != std::string::npos,
+            "sing-box export must emit authenticated_length");
+}
+
+// 反向：VLESS 节点不得再输出这两个键，mihomo 的 VlessOption 根本没有它们
+void test_clash_vless_omits_vmess_only_fields() {
+    const std::string content = R"(proxies:
+  - name: vless-node
+    type: vless
+    server: v.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+    global-padding: true
+    authenticated-length: true
+)";
+    std::vector<Proxy> nodes{parse_clash(content)};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("global-padding") == std::string::npos,
+            "VLESS must not emit global-padding (not a VlessOption field), got:\n" + exported);
+    require(exported.find("authenticated-length") == std::string::npos,
+            "VLESS must not emit authenticated-length (not a VlessOption field), got:\n" + exported);
+}
+
+// mihomo 的 VlessOption/VmessOption/TrojanOption 都有 fingerprint（服务器证书 pinning）、
+// certificate + private-key（mTLS 客户端证书），语义与 client-fingerprint（uTLS）互不相同。
+// component/ca/fingerprint.go 会拒绝把浏览器名填进 fingerprint，反之 SHA256 填进
+// client-fingerprint 也会让 uTLS 拿到无效指纹名，两个方向都不能串。
+void test_clash_tls_cert_fields_roundtrip_all_protocols() {
+    const std::string sha256 =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const std::string tmpl = R"(proxies:
+  - name: cert-node
+    type: %TYPE%
+    server: c.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    password: secret
+    alterId: 0
+    cipher: auto
+    tls: true
+    network: tcp
+    client-fingerprint: chrome
+    fingerprint: %FP%
+    certificate: |
+      -----BEGIN CERTIFICATE-----
+      MIIB
+      -----END CERTIFICATE-----
+    private-key: |
+      -----BEGIN PRIVATE KEY-----
+      MIIE
+      -----END PRIVATE KEY-----
+)";
+    for (const char *type : {"vless", "vmess", "trojan"}) {
+        std::string content = tmpl;
+        content.replace(content.find("%TYPE%"), 6, type);
+        content.replace(content.find("%FP%"), 4, sha256);
+
+        const Proxy node = parse_clash(content);
+        require(node.CertFingerprint == sha256,
+                std::string(type) + ": fingerprint must be parsed as a cert fingerprint");
+        require(node.Certificate.find("BEGIN CERTIFICATE") != std::string::npos,
+                std::string(type) + ": certificate must be parsed");
+        require(node.PrivateKeyPem.find("BEGIN PRIVATE KEY") != std::string::npos,
+                std::string(type) + ": private-key must be parsed into PrivateKeyPem");
+
+        std::vector<Proxy> nodes{node};
+        std::vector<RulesetContent> rulesets;
+        ProxyGroupConfigs groups;
+        extra_settings ext;
+        ext.nodelist = true;
+        ext.clash_new_field_name = true;
+        const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+        const YAML::Node rt = YAML::Load(exported)["proxies"][0];
+
+        require(rt["fingerprint"].as<std::string>() == sha256,
+                std::string(type) + ": fingerprint must be exported under its own key");
+        require(rt["certificate"].as<std::string>().find("BEGIN CERTIFICATE") != std::string::npos,
+                std::string(type) + ": certificate must be exported");
+        require(rt["private-key"].as<std::string>().find("BEGIN PRIVATE KEY") != std::string::npos,
+                std::string(type) + ": private-key must be exported");
+        // 证书指纹绝不能跑进 uTLS 指纹字段
+        require(rt["client-fingerprint"].as<std::string>() == "chrome",
+                std::string(type) + ": client-fingerprint must stay the browser fingerprint");
+    }
+}
+
+// 回归：链接的 fp= 是浏览器指纹，不得因新增证书指纹字段而泄漏到 fingerprint 键
+// （mihomo 的 NewFingerprintVerifier 遇到浏览器名会直接报错拒绝节点）
+void test_vless_link_browser_fingerprint_not_leaked_as_cert_fingerprint() {
+    std::vector<Proxy> nodes;
+    explodeSub(
+        "vless://12345678-1234-1234-1234-123456789012@e.example.com:443"
+        "?security=tls&type=tcp&fp=chrome&sni=e.example.com#fp-node",
+        nodes);
+    require(nodes.size() == 1, "expected one node");
+    require(nodes[0].CertFingerprint.empty(),
+            "link fp= must not be treated as a cert fingerprint");
+
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node rt = YAML::Load(exported)["proxies"][0];
+    require(rt["client-fingerprint"].as<std::string>() == "chrome",
+            "link fp= must still land in client-fingerprint");
+    require(!rt["fingerprint"].IsDefined(),
+            "browser fingerprint must never be emitted as the cert-pinning fingerprint");
+}
+
+// mihomo 的 RealityOptions 有三个字段，support-x25519mlkem768 此前被漏掉。
+// 它控制 ClientHello 是否保留 X25519MLKEM768 密钥共享组（component/tls/reality.go:58
+// 在其为 false 时调 BuildRemovedX25519MLKEM768HandshakeState 移除），丢失会静默
+// 关掉后量子密钥交换。Xray 与 sing-box 都无对应字段，故只做 clash 双向。
+void test_clash_reality_support_x25519mlkem768_roundtrip() {
+    const std::string tmpl = R"(proxies:
+  - name: reality-pq
+    type: %TYPE%
+    server: r.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    password: secret
+    tls: true
+    network: tcp
+    client-fingerprint: chrome
+    reality-opts:
+      public-key: pbk-value
+      short-id: aabbccdd
+      support-x25519mlkem768: true
+)";
+    for (const char *type : {"vless", "trojan"}) {
+        std::string content = tmpl;
+        content.replace(content.find("%TYPE%"), 6, type);
+
+        const Proxy node = parse_clash(content);
+        require(!node.SupportX25519MLKEM768.is_undef() && node.SupportX25519MLKEM768.get(),
+                std::string(type) + ": support-x25519mlkem768 must be parsed");
+
+        std::vector<Proxy> nodes{node};
+        std::vector<RulesetContent> rulesets;
+        ProxyGroupConfigs groups;
+        extra_settings ext;
+        ext.nodelist = true;
+        ext.clash_new_field_name = true;
+        const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+        const YAML::Node ro = YAML::Load(exported)["proxies"][0]["reality-opts"];
+        require(ro["support-x25519mlkem768"].as<bool>(),
+                std::string(type) + ": support-x25519mlkem768 must be exported");
+        require(ro["public-key"].as<std::string>() == "pbk-value",
+                std::string(type) + ": public-key must still survive");
+    }
+}
+
+// 未配置时不得凭空写出 false，否则等于替用户做了决定
+void test_clash_reality_omits_unset_x25519mlkem768() {
+    const std::string content = R"(proxies:
+  - name: reality-plain
+    type: vless
+    server: r.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+    reality-opts:
+      public-key: pbk-value
+      short-id: aabbccdd
+)";
+    std::vector<Proxy> nodes{parse_clash(content)};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("support-x25519mlkem768") == std::string::npos,
+            "unset support-x25519mlkem768 must not be emitted, got:\n" + exported);
+}
+
+// download-settings 的 reality-opts 同样承载这个字段
+void test_clash_download_settings_x25519mlkem768() {
+    const std::string content = R"(proxies:
+  - name: xhttp-ds-pq
+    type: vless
+    server: xhttp.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /up
+      download-settings:
+        server: dl.example.com
+        port: 443
+        tls: true
+        reality-opts:
+          public-key: dl-pbk
+          short-id: 11aa22bb
+          support-x25519mlkem768: true
+)";
+    const Proxy node = parse_clash(content);
+    require(node.XhttpDownload.find("support-x25519mlkem768") != std::string::npos,
+            "download-settings support-x25519mlkem768 must be parsed, got: " + node.XhttpDownload);
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node ro =
+        YAML::Load(exported)["proxies"][0]["xhttp-opts"]["download-settings"]["reality-opts"];
+    require(ro["support-x25519mlkem768"].as<bool>(),
+            "download-settings support-x25519mlkem768 must be exported");
+    require(ro["public-key"].as<std::string>() == "dl-pbk",
+            "download-settings public-key must still survive");
+}
+
+// mihomo 的 BasicOption 被所有出站协议嵌入，其中 mptcp / interface-name /
+// routing-mark 此前全项目零处理。放在公共位置处理，故用多个协议验证覆盖面。
+void test_clash_basic_option_dialer_fields_roundtrip() {
+    const std::string tmpl = R"(proxies:
+  - name: dialer-opts
+    type: %TYPE%
+    server: d.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    password: secret
+    cipher: aes-128-gcm
+    alterId: 0
+    mptcp: true
+    interface-name: eth0
+    routing-mark: 1234
+)";
+    for (const char *type : {"vless", "vmess", "trojan", "ss"}) {
+        std::string content = tmpl;
+        content.replace(content.find("%TYPE%"), 6, type);
+
+        const Proxy node = parse_clash(content);
+        require(!node.MPTCP.is_undef() && node.MPTCP.get(),
+                std::string(type) + ": mptcp must be parsed");
+        require(node.InterfaceName == "eth0",
+                std::string(type) + ": interface-name must be parsed");
+        require(node.RoutingMark == 1234,
+                std::string(type) + ": routing-mark must be parsed");
+
+        std::vector<Proxy> nodes{node};
+        std::vector<RulesetContent> rulesets;
+        ProxyGroupConfigs groups;
+        extra_settings ext;
+        ext.nodelist = true;
+        ext.clash_new_field_name = true;
+        const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+        const YAML::Node rt = YAML::Load(exported)["proxies"][0];
+        require(rt["mptcp"].as<bool>(), std::string(type) + ": mptcp must be exported");
+        require(rt["interface-name"].as<std::string>() == "eth0",
+                std::string(type) + ": interface-name must be exported");
+        require(rt["routing-mark"].as<int>() == 1234,
+                std::string(type) + ": routing-mark must be exported");
+    }
+}
+
+// 未配置时不得凭空写出 mptcp: false / routing-mark: 0
+void test_clash_basic_option_omits_unset_dialer_fields() {
+    const std::string content = R"(proxies:
+  - name: plain
+    type: vless
+    server: d.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+)";
+    std::vector<Proxy> nodes{parse_clash(content)};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(exported.find("mptcp") == std::string::npos,
+            "unset mptcp must not be emitted, got:\n" + exported);
+    require(exported.find("interface-name") == std::string::npos,
+            "unset interface-name must not be emitted, got:\n" + exported);
+    require(exported.find("routing-mark") == std::string::npos,
+            "unset routing-mark must not be emitted, got:\n" + exported);
+}
+
+// sing-box 侧对应 bind_interface / routing_mark / tcp_multi_path
+void test_singbox_dialer_fields_roundtrip() {
+    const std::string content = R"({
+  "inbounds": [],
+  "outbounds": [
+    {
+      "type": "vless",
+      "tag": "dialer-sb",
+      "server": "d.example.com",
+      "server_port": 443,
+      "uuid": "12345678-1234-1234-1234-123456789012",
+      "bind_interface": "eth0",
+      "routing_mark": 1234,
+      "tcp_multi_path": true
+    }
+  ],
+  "route": {}
+})";
+    const Proxy node = parse_singbox(content);
+    require(node.InterfaceName == "eth0", "sing-box bind_interface must be parsed");
+    require(node.RoutingMark == 1234, "sing-box routing_mark must be parsed");
+    require(!node.MPTCP.is_undef() && node.MPTCP.get(), "sing-box tcp_multi_path must be parsed");
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    const std::string exported = proxyToSingBox(nodes, "", rulesets, groups, ext);
+    require(exported.find("\"bind_interface\":\"eth0\"") != std::string::npos,
+            "sing-box export must emit bind_interface");
+    require(exported.find("\"routing_mark\":1234") != std::string::npos,
+            "sing-box export must emit routing_mark");
+    require(exported.find("\"tcp_multi_path\":true") != std::string::npos,
+            "sing-box export must emit tcp_multi_path");
+}
+
+// AnyTLS 此前把 client-fingerprint 存进 Proxy.Fingerprint，而该字段的另外两条
+// 导出路径把它当证书指纹用：Surge 会输出 server-cert-fingerprint-sha256=chrome。
+// mihomo 的 AnyTLSOption 本就有 ClientFingerprint 与 Fingerprint 两个独立字段，
+// 两种语义必须在解析阶段就分开存放。
+void test_anytls_fingerprint_semantics_separated() {
+    const std::string sha256 =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const std::string content = R"(proxies:
+  - name: anytls-fp
+    type: anytls
+    server: a.example.com
+    port: 443
+    password: secret
+    sni: a.example.com
+    client-fingerprint: firefox
+    fingerprint: )" + sha256 + "\n";
+
+    const Proxy node = parse_clash(content);
+    require(node.ClientFingerprint == "firefox",
+            "anytls client-fingerprint must land in ClientFingerprint, got: " + node.ClientFingerprint);
+    require(node.CertFingerprint == sha256,
+            "anytls fingerprint must land in CertFingerprint, got: " + node.CertFingerprint);
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node rt = YAML::Load(exported)["proxies"][0];
+    require(rt["client-fingerprint"].as<std::string>() == "firefox",
+            "anytls client-fingerprint must round-trip");
+    require(rt["fingerprint"].as<std::string>() == sha256,
+            "anytls cert fingerprint must round-trip under its own key");
+
+    // Surge 的 server-cert-fingerprint-sha256 必须来自证书指纹，不能是浏览器名
+    const std::string surge = proxyToSurge(nodes, "", rulesets, groups, 4, ext);
+    require(surge.find("server-cert-fingerprint-sha256=chrome") == std::string::npos &&
+            surge.find("server-cert-fingerprint-sha256=firefox") == std::string::npos,
+            "Surge must never emit a browser fingerprint as a cert fingerprint, got:\n" + surge);
+    require(surge.find(sha256) != std::string::npos,
+            "Surge must emit the real cert fingerprint, got:\n" + surge);
+
+    // sing-box 的 utls.fingerprint 是浏览器指纹，不能拿证书指纹去填
+    const std::string sb = proxyToSingBox(nodes, "", rulesets, groups, ext);
+    require(sb.find("\"fingerprint\":\"firefox\"") != std::string::npos,
+            "sing-box utls.fingerprint must be the browser fingerprint, got:\n" + sb);
+    require(sb.find(sha256) == std::string::npos,
+            "sing-box must not put the cert fingerprint into utls, got:\n" + sb);
+}
+
+// anytls 链接里 fp= 是浏览器指纹，hpkp= 是证书 pinning，两者不能落进同一个字段
+void test_anytls_link_fp_and_hpkp_separated() {
+    const std::string sha256 =
+        "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    const Proxy byFp = parse_link(
+        "anytls://secret@a.example.com:443?sni=a.example.com&fp=chrome#anytls-fp");
+    require(byFp.ClientFingerprint == "chrome",
+            "anytls link fp= must be a browser fingerprint, got: " + byFp.ClientFingerprint);
+    require(byFp.CertFingerprint.empty(),
+            "anytls link fp= must not be treated as a cert fingerprint");
+
+    const Proxy byHpkp = parse_link(
+        "anytls://secret@a.example.com:443?sni=a.example.com&hpkp=" + sha256 + "#anytls-hpkp");
+    require(byHpkp.CertFingerprint == sha256,
+            "anytls link hpkp= must be a cert fingerprint, got: " + byHpkp.CertFingerprint);
+    require(byHpkp.ClientFingerprint.empty(),
+            "anytls link hpkp= must not be treated as a browser fingerprint");
+}
+
+// vless/trojan 的 construct 曾把浏览器指纹同时写进 Fingerprint 与 ClientFingerprint，
+// 链接导出的 fp= 取的是前者。清理后 Fingerprint 不再承载客户端指纹，链接导出必须
+// 改取 ClientFingerprint——本测试锁定清理前后行为一致。
+void test_vless_trojan_link_fp_uses_client_fingerprint() {
+    struct { const char *link; const char *name; } cases[] = {
+        {"vless://12345678-1234-1234-1234-123456789012@e.example.com:443"
+         "?security=tls&type=tcp&fp=chrome&sni=e.example.com#vless-fp", "vless"},
+        {"trojan://pass@e.example.com:443?security=tls&type=tcp&fp=firefox&sni=e.example.com#trojan-fp",
+         "trojan"},
+    };
+    for (const auto &c : cases) {
+        std::vector<Proxy> nodes;
+        explodeSub(c.link, nodes);
+        require(nodes.size() == 1, std::string(c.name) + ": expected one node");
+        require(nodes[0].ClientFingerprint == (std::string(c.name) == "vless" ? "chrome" : "firefox"),
+                std::string(c.name) + ": link fp= must land in ClientFingerprint");
+        // 浏览器指纹不属于证书指纹，绝不能落进 CertFingerprint
+        require(nodes[0].CertFingerprint.empty(),
+                std::string(c.name) + ": link fp= must not become a cert fingerprint");
+
+        extra_settings ext;
+        constexpr int kVlessMask = 32, kTrojanMask = 8;
+        const std::string decoded = urlSafeBase64Decode(
+            proxyToSingle(nodes, std::string(c.name) == "vless" ? kVlessMask : kTrojanMask, ext));
+        const std::string want =
+            std::string("fp=") + (std::string(c.name) == "vless" ? "chrome" : "firefox");
+        require(decoded.find(want) != std::string::npos,
+                std::string(c.name) + ": exported link must keep " + want + ", got: " + decoded);
+    }
 }
 
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
@@ -1847,6 +2532,7 @@ int main() {
         test_clash_xhttp_doc_scalar_fields_roundtrip();
         test_clash_xhttp_download_settings_reality_opts_nested();
         test_clash_xhttp_doc_fields_exported_to_link_extra();
+        test_clash_xhttp_padding_and_range_exported_to_link_extra();
         test_vless_link_extra_doc_fields_mapped_to_clash();
         test_clash_vless_tls_layer_opts_roundtrip();
         test_clash_xhttp_download_settings_tls_layer_opts();
@@ -1854,6 +2540,23 @@ int main() {
         test_xhttp_no_grpc_header_link_mapping();
         test_xhttp_h_keep_alive_period_xmux_mapping();
         test_vless_link_extra_scmax_xmux_mapped_to_clash();
+        test_clash_string_scalars_keep_string_type();
+        test_clash_password_numeric_keeps_string_type();
+        test_clash_string_anchor_beautify_in_flow_style();
+        test_clash_vmess_padding_and_auth_length_roundtrip();
+        test_singbox_vmess_padding_and_auth_length();
+        test_clash_vless_omits_vmess_only_fields();
+        test_clash_tls_cert_fields_roundtrip_all_protocols();
+        test_vless_link_browser_fingerprint_not_leaked_as_cert_fingerprint();
+        test_clash_reality_support_x25519mlkem768_roundtrip();
+        test_clash_reality_omits_unset_x25519mlkem768();
+        test_clash_download_settings_x25519mlkem768();
+        test_clash_basic_option_dialer_fields_roundtrip();
+        test_clash_basic_option_omits_unset_dialer_fields();
+        test_singbox_dialer_fields_roundtrip();
+        test_anytls_fingerprint_semantics_separated();
+        test_anytls_link_fp_and_hpkp_separated();
+        test_vless_trojan_link_fp_uses_client_fingerprint();
         test_quanx_export_skips_vless_xhttp_node();
         test_proxy_group_toml_extras_preserve_scalar_types();
         test_proxy_group_trailing_provider_is_not_treated_as_extra();

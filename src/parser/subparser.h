@@ -51,7 +51,7 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
                     tribool udp = tribool(), tribool tfo = tribool(), tribool scv = tribool(),
                     tribool tls13 = tribool(), const std::string &underlying_proxy = "", tribool v2ray_http_upgrade = tribool(),
                     const std::string &encryption = "", const std::string &ip_version = "", tribool xudp = tribool(),
-                    tribool packet_addr = tribool(), tribool global_padding = tribool(), tribool authenticated_length = tribool(),
+                    tribool packet_addr = tribool(),
                     tribool ech_enable = tribool(), const std::string &ech_config = "",
                     uint32_t ws_max_early_data = 0, const std::string &ws_early_data_header_name = "",
                     tribool v2ray_http_upgrade_fast_open = tribool());

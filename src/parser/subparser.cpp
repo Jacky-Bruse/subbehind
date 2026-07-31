@@ -193,9 +193,15 @@ static rapidjson::Value yamlFlatMapToJson(const Node &node, rapidjson::Document:
         std::string k = kv.first.as<std::string>();
         std::string v = kv.second.as<std::string>();
         rapidjson::Value key(k.c_str(), alloc);
-        if (v == "true" || v == "false")
-            obj.AddMember(key, v == "true", alloc);
-        else if (!v.empty() && v.size() < 10 && v.find_first_not_of("0123456789") == std::string::npos)
+        // 带引号的标量是用户明确的字符串意图，不能按形状猜类型：密码 "0123" 转成
+        // 整数会丢前导零，"true" 转成布尔更会让 mihomo 的 decodeString 报
+        // unconvertible type 而丢弃整个节点（它没有 bool→string 分支）。
+        // yaml-cpp 对 plain 标量给 Tag "?"，单双引号均给 "!"。
+        const bool quoted = kv.second.Tag() == "!";
+        if (!quoted && (v == "true" || v == "false"))
+            obj.AddMember(key, rapidjson::Value(v == "true"), alloc);
+        else if (!quoted && !v.empty() && v.size() < 10 &&
+                 v.find_first_not_of("0123456789") == std::string::npos)
             obj.AddMember(key, atoi(v.c_str()), alloc);
         else
             obj.AddMember(key, rapidjson::Value(v.c_str(), alloc), alloc);
@@ -264,6 +270,10 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
     if (node["reality-opts"].IsDefined() && node["reality-opts"].IsMap()) {
         node["reality-opts"]["public-key"] >>= pbk;
         node["reality-opts"]["short-id"] >>= sid;
+        if (node["reality-opts"]["support-x25519mlkem768"].IsDefined())
+            out.AddMember("support-x25519mlkem768",
+                          safe_as<std::string>(
+                              node["reality-opts"]["support-x25519mlkem768"]) == "true", alloc);
     }
     if (!pbk.empty())
         out.AddMember("public-key", rapidjson::Value(pbk.c_str(), alloc), alloc);
@@ -380,7 +390,7 @@ static void assignXhttpFields(Proxy &node, const std::string &mode, const std::s
                 if (!d.HasMember(f.xray))
                     continue;
                 const auto &v = d[f.xray];
-                if (f.isBool && v.IsBool())
+                if (f.type == XhttpFieldType::Bool && v.IsBool())
                     co.AddMember(rapidjson::Value(f.mihomo, ca), rapidjson::Value(v.GetBool()), ca);
                 else if (v.IsString() && v.GetStringLength() > 0)
                     co.AddMember(rapidjson::Value(f.mihomo, ca),
@@ -559,7 +569,6 @@ void trojanConstruct(Proxy &node, const std::string &group, const std::string &r
     node.TLSSecure = tlssecure;
     node.TransferProtocol = network.empty() ? "tcp" : network;
     node.Path = path;
-    node.Fingerprint = fp;
     node.ServerName = sni;
     node.AlpnList = alpnList;
     // 新增 mihomo 参数
@@ -649,7 +658,9 @@ void anyTlSConstruct(Proxy &node, const std::string &group, const std::string &r
     node.Password = password;
     node.AlpnList = AlpnList;
     node.SNI = sni;
-    node.Fingerprint = fingerprint;
+    // AnyTLS 的这个参数是 uTLS 浏览器指纹；服务器证书指纹走 CertFingerprint。
+    // 混存会让 Surge 导出把 "chrome" 写成 server-cert-fingerprint-sha256。
+    node.ClientFingerprint = fingerprint;
     node.IdleSessionCheckInterval = idleSessionCheckInterval;
     node.IdleSessionTimeout = idleSessionTimeout;
     node.MinIdleSession = minIdleSession;
@@ -680,7 +691,7 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
                     tribool udp, tribool tfo,
                     tribool scv, tribool tls13, const std::string &underlying_proxy, tribool v2ray_http_upgrade,
                     const std::string &encryption, const std::string &ip_version, tribool xudp,
-                    tribool packet_addr, tribool global_padding, tribool authenticated_length,
+                    tribool packet_addr,
                     tribool ech_enable, const std::string &ech_config,
                     uint32_t ws_max_early_data, const std::string &ws_early_data_header_name,
                     tribool v2ray_http_upgrade_fast_open) {
@@ -699,8 +710,9 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
     node.TLSSecure = tls == "tls" || tls == "xtls" || tls == "reality";
     node.PublicKey = pbk;
     node.ShortId = sid;
-    node.ClientFingerprint = fp;  // 使用 ClientFingerprint 存储客户端指纹
-    node.Fingerprint = fp;        // 同时保留 Fingerprint 兼容性
+    // fp= 是 uTLS 浏览器指纹，只存 ClientFingerprint；
+    // Fingerprint 专职服务器证书指纹，不再混存
+    node.ClientFingerprint = fp;
     node.ServerName = sni;
     node.AlpnList = alpnList;
     node.PacketEncoding = packet_encoding;
@@ -709,8 +721,6 @@ void vlessConstruct(Proxy &node, const std::string &group, const std::string &re
     node.IpVersion = ip_version;
     node.XUDP = xudp;
     node.PacketAddr = packet_addr;
-    node.GlobalPadding = global_padding;
-    node.AuthenticatedLength = authenticated_length;
     node.EchEnable = ech_enable;
     node.EchConfig = ech_config;
     node.WsMaxEarlyData = ws_max_early_data;
@@ -1765,6 +1775,13 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
         udp = safe_as<std::string>(singleproxy["udp"]);
         scv = safe_as<std::string>(singleproxy["skip-cert-verify"]);
         singleproxy["dialer-proxy"] >>= underlying_proxy;
+        // BasicOption 拨号选项：mihomo 所有出站协议共有，故在此统一读取，
+        // 不经各协议的 construct 形参传递（那条路要给十余个协议改签名）。
+        if (singleproxy["mptcp"].IsDefined())
+            node.MPTCP = safe_as<std::string>(singleproxy["mptcp"]) == "true";
+        singleproxy["interface-name"] >>= node.InterfaceName;
+        if (singleproxy["routing-mark"].IsDefined())
+            node.RoutingMark = safe_as<int>(singleproxy["routing-mark"]);
         switch (hash_(proxytype)) {
             case "vmess"_hash:
                 singleproxy["uuid"] >>= id;
@@ -1817,6 +1834,13 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 vmessConstruct(node, group, ps, server, port, "", id, aid, net, cipher, path, host, edge, tls, sni,
                                alpnList, udp,
                                tfo, scv, tribool(), underlying_proxy);
+                // VMess AEAD 专有能力，VLESS 无此概念（mihomo VmessOption / sing-box
+                // VMessOutboundOptions 才有）。在 construct 之后赋值，不焊进函数签名。
+                if (singleproxy["global-padding"].IsDefined())
+                    node.GlobalPadding = safe_as<std::string>(singleproxy["global-padding"]) == "true";
+                if (singleproxy["authenticated-length"].IsDefined())
+                    node.AuthenticatedLength =
+                        safe_as<std::string>(singleproxy["authenticated-length"]) == "true";
                 break;
             case "ss"_hash:
                 group = SS_DEFAULT_GROUP;
@@ -1981,6 +2005,10 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 if (singleproxy["reality-opts"].IsDefined()) {
                     singleproxy["reality-opts"]["public-key"] >>= pbk;
                     singleproxy["reality-opts"]["short-id"] >>= sid;
+                    if (singleproxy["reality-opts"]["support-x25519mlkem768"].IsDefined())
+                        node.SupportX25519MLKEM768 =
+                            safe_as<std::string>(
+                                singleproxy["reality-opts"]["support-x25519mlkem768"]) == "true";
                     node.PublicKey = pbk;
                     node.ShortId = sid;
                 }
@@ -2157,6 +2185,10 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 if (singleproxy["reality-opts"].IsDefined()) {
                     singleproxy["reality-opts"]["public-key"] >>= pbk;
                     singleproxy["reality-opts"]["short-id"] >>= sid;
+                    if (singleproxy["reality-opts"]["support-x25519mlkem768"].IsDefined())
+                        node.SupportX25519MLKEM768 =
+                            safe_as<std::string>(
+                                singleproxy["reality-opts"]["support-x25519mlkem768"]) == "true";
                     tls = "reality";
                 }
                 singleproxy["flow"] >>= flow;
@@ -2167,7 +2199,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 {
                     // 新增 mihomo 参数读取
                     std::string ip_version;
-                    tribool xudp_flag, packet_addr_flag, global_padding_flag, authenticated_length_flag;
+                    tribool xudp_flag, packet_addr_flag;
                     tribool ech_enable_flag, v2ray_http_upgrade_fast_open_flag;
                     std::string ech_config, ws_early_data_header_name;
                     uint32_t ws_max_early_data = 0;
@@ -2178,12 +2210,6 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                     }
                     if (singleproxy["packet-addr"].IsDefined()) {
                         packet_addr_flag = safe_as<std::string>(singleproxy["packet-addr"]) == "true";
-                    }
-                    if (singleproxy["global-padding"].IsDefined()) {
-                        global_padding_flag = safe_as<std::string>(singleproxy["global-padding"]) == "true";
-                    }
-                    if (singleproxy["authenticated-length"].IsDefined()) {
-                        authenticated_length_flag = safe_as<std::string>(singleproxy["authenticated-length"]) == "true";
                     }
                     // 顶层 ech/ech-config 是早期误写的键，保留读取以兼容旧输出
                     if (singleproxy["ech"].IsDefined()) {
@@ -2211,7 +2237,7 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                     vlessConstruct(node, XRAY_DEFAULT_GROUP, ps, server, port, type, id, aid, net, "auto", flow, mode, path,
                                    host, "", tls, pbk, sid, fp, sni, alpnList, packet_encoding, udp, tribool(), tribool(),
                                    tribool(), underlying_proxy, v2ray_http_upgrade, encryption, ip_version, xudp_flag,
-                                   packet_addr_flag, global_padding_flag, authenticated_length_flag,
+                                   packet_addr_flag,
                                    ech_enable_flag, ech_config, ws_max_early_data, ws_early_data_header_name,
                                    v2ray_http_upgrade_fast_open_flag);
                     {
@@ -2433,6 +2459,28 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 break;
             default:
                 continue;
+        }
+
+        // TLS 证书类字段：mihomo 的 VlessOption/VmessOption/TrojanOption 都有。
+        // fingerprint 是服务器证书 pinning（SHA256），与 client-fingerprint 的 uTLS
+        // 指纹语义不同，故存进专用的 CertFingerprint——Fingerprint 在这几条路径上
+        // 承载的是客户端指纹，还被链接的 fp= 与 sing-box 的 utls.fingerprint 消费。
+        // 放在 construct 之后赋值，避免被构造函数覆盖。
+        switch (node.Type) {
+            case ProxyType::VLESS:
+            case ProxyType::VMess:
+            case ProxyType::Trojan:
+            case ProxyType::AnyTLS:
+                singleproxy["fingerprint"] >>= node.CertFingerprint;
+                singleproxy["certificate"] >>= node.Certificate;
+                singleproxy["private-key"] >>= node.PrivateKeyPem;
+                // VMess 分支此前完全不读 client-fingerprint（VLESS/Trojan 经 fp 参数读），
+                // 导致 clash→clash 丢失该字段。用条件读取避免键缺失时清空已有值。
+                if (singleproxy["client-fingerprint"].IsDefined())
+                    singleproxy["client-fingerprint"] >>= node.ClientFingerprint;
+                break;
+            default:
+                break;
         }
 
         node.Id = index;
@@ -3802,6 +3850,11 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                 port = GetMember(singboxNode, "server_port");
                 underlying_proxy = GetMember(singboxNode, "detour");
                 tfo = GetMember(singboxNode, "tcp_fast_open");
+                node.InterfaceName = GetMember(singboxNode, "bind_interface");
+                if (singboxNode.HasMember("routing_mark") && singboxNode["routing_mark"].IsInt())
+                    node.RoutingMark = singboxNode["routing_mark"].GetInt();
+                if (singboxNode.HasMember("tcp_multi_path") && singboxNode["tcp_multi_path"].IsBool())
+                    node.MPTCP = singboxNode["tcp_multi_path"].GetBool();
                 std::vector<std::string> alpnList;
                 if (singboxNode.HasMember("tls") && singboxNode["tls"].IsObject()) {
                     rapidjson::Value tlsObj = singboxNode["tls"].GetObject();
@@ -3866,6 +3919,11 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                         vmessConstruct(node, group, ps, server, port, "", id, aid, net, cipher, path, host, edge, tls,
                                        sni, alpnList, udp,
                                        tfo, scv, tribool(), underlying_proxy);
+                        if (singboxNode.HasMember("global_padding") && singboxNode["global_padding"].IsBool())
+                            node.GlobalPadding = singboxNode["global_padding"].GetBool();
+                        if (singboxNode.HasMember("authenticated_length") &&
+                            singboxNode["authenticated_length"].IsBool())
+                            node.AuthenticatedLength = singboxNode["authenticated_length"].GetBool();
                         break;
                     case "shadowsocks"_hash:
                         group = SS_DEFAULT_GROUP;
@@ -4130,8 +4188,8 @@ void explodeAnyTLS(std::string anytls, Proxy &node) {
     fp = getUrlArg(addition, "fp");
     if (fp.empty())
         fp = getUrlArg(addition, "fingerprint");
-    if (fp.empty())
-        fp = urlDecode(getUrlArg(addition, "hpkp"));
+    // hpkp 是 HTTP Public Key Pinning，属服务器证书指纹，与 fp= 的浏览器指纹不同
+    const std::string anytls_hpkp = urlDecode(getUrlArg(addition, "hpkp"));
     sni = getUrlArg(addition, "sni");
     if (sni.empty())
         sni = getUrlArg(addition, "peer");
@@ -4141,6 +4199,7 @@ void explodeAnyTLS(std::string anytls, Proxy &node) {
 
     anyTlSConstruct(node, ANYTLS_DEFAULT_GROUP, remarks, port, password, add, alpnList, fp, sni, udp, tfo, scv,
                     tribool(), "", 30, 30, 0);
+    node.CertFingerprint = anytls_hpkp;
 }
 
 void explode(const std::string &link, Proxy &node) {

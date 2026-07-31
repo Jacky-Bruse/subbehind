@@ -248,6 +248,46 @@ groupGenerate(const std::string &rule, std::vector<Proxy> &nodelist, string_arra
     }
 }
 
+// mihomo 的 parseXHTTPExtra 对这类字段断言 .(float64)，写成字符串会被静默丢弃；
+// 但范围值（"100-200"）只能是字符串，Xray 的 Int32Range 两种都收、mihomo 收不了范围。
+// 故按形态定型：纯数字走 JSON 数字（两端都认），范围保持字符串（至少 Xray 侧不丢）。
+static void addExtraNumericOrRange(rapidjson::Document &obj, const char *key,
+                                   const std::string &val,
+                                   rapidjson::Document::AllocatorType &alloc) {
+    if (val.empty())
+        return;
+    if (val.find_first_not_of("0123456789") == std::string::npos)
+        obj.AddMember(rapidjson::Value(key, alloc),
+                      rapidjson::Value(static_cast<int64_t>(atoll(val.c_str()))), alloc);
+    else
+        obj.AddMember(rapidjson::Value(key, alloc), rapidjson::Value(val.c_str(), alloc), alloc);
+}
+
+// yaml-cpp 写字符串标量时不加引号，形似布尔/数字的值被读回来就不再是字符串：
+// 密码 "0123" 变数字丢前导零，"true" 变布尔更会让 mihomo 的 decodeString 报
+// unconvertible type 而丢弃整个节点。这里判断一个值是否需要锚定类型。
+// ponytail: 首字符像数字起始就一律锚定，宁可多一个引号也不漏判；
+// 副作用只是 "1abc" 这类值也带上引号，无害。
+static bool yamlNeedsStringTag(const std::string &v) {
+    if (v.empty())
+        return true;
+    const std::string lower = toLower(v);
+    if (lower == "true" || lower == "false" || lower == "null" || lower == "~" ||
+        lower == "yes" || lower == "no" || lower == "on" || lower == "off")
+        return true;
+    return isdigit(static_cast<unsigned char>(v[0])) || v[0] == '+' || v[0] == '-' || v[0] == '.';
+}
+
+// 写入字符串标量并在必要时打 !<str> 标签锚定类型，由 beautifyStringTags 还原成
+// 标准引号。标签随 Node 走，即使某条输出路径漏了美化，mihomo 读到的依然是字符串
+// （yaml.v3 的 resolve 对不可解析的标签原样返回字符串），只是不够好看。
+// force 用于语义上必须是字符串的字段，如十六进制的 short-id。
+static void setYamlString(YAML::Node node, const std::string &value, bool force = false) {
+    node = value;
+    if (force || yamlNeedsStringTag(value))
+        node.SetTag("str");
+}
+
 // JSON object（标量成员）→ YAML map，保留 bool/int/string 类型
 static void jsonObjToYamlMap(const rapidjson::Value &obj, YAML::Node out) {
     for (const auto &kv : obj.GetObject()) {
@@ -257,7 +297,7 @@ static void jsonObjToYamlMap(const rapidjson::Value &obj, YAML::Node out) {
         else if (kv.value.IsInt())
             out[k] = kv.value.GetInt();
         else if (kv.value.IsString())
-            out[k] = std::string(kv.value.GetString());
+            setYamlString(out[k], kv.value.GetString());
     }
 }
 
@@ -307,7 +347,9 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
         ds["reality-opts"]["public-key"] = pbk;
     std::string sid = GetMember(d, "short-id");
     if (!sid.empty())
-        ds["reality-opts"]["short-id"] = sid;
+        setYamlString(ds["reality-opts"]["short-id"], sid, true);
+    if (d.HasMember("support-x25519mlkem768") && d["support-x25519mlkem768"].IsBool())
+        ds["reality-opts"]["support-x25519mlkem768"] = d["support-x25519mlkem768"].GetBool();
     std::string path = GetMember(d, "path");
     if (!path.empty())
         ds["path"] = path;
@@ -416,9 +458,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     continue;
                 singleproxy["type"] = "ss";
                 singleproxy["cipher"] = x.EncryptMethod;
-                singleproxy["password"] = x.Password;
-                if (std::all_of(x.Password.begin(), x.Password.end(), ::isdigit) && !x.Password.empty())
-                    singleproxy["password"].SetTag("str");
+                setYamlString(singleproxy["password"], x.Password);
                 // 新增 mihomo 参数输出
                 if (!x.UdpOverTcp.is_undef()) {
                     singleproxy["udp-over-tcp"] = x.UdpOverTcp.get();
@@ -463,7 +503,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 break;
             case ProxyType::VMess:
                 singleproxy["type"] = "vmess";
-                singleproxy["uuid"] = x.UserId;
+                setYamlString(singleproxy["uuid"], x.UserId);
                 singleproxy["alterId"] = x.AlterId;
                 singleproxy["cipher"] = x.EncryptMethod;
                 singleproxy["tls"] = x.TLSSecure;
@@ -477,6 +517,12 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["skip-cert-verify"] = scv.get();
                 if (!x.ServerName.empty())
                     singleproxy["servername"] = x.ServerName;
+                // VMess AEAD 专有能力（mihomo VmessOption 的 global-padding /
+                // authenticated-length），此前被错接在 VLESS 分支上
+                if (!x.GlobalPadding.is_undef())
+                    singleproxy["global-padding"] = x.GlobalPadding.get();
+                if (!x.AuthenticatedLength.is_undef())
+                    singleproxy["authenticated-length"] = x.AuthenticatedLength.get();
                 // 新增 mihomo 参数输出
                 if (!x.ClientFingerprint.empty())
                     singleproxy["client-fingerprint"] = x.ClientFingerprint;
@@ -551,9 +597,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
 
                 singleproxy["type"] = "ssr";
                 singleproxy["cipher"] = x.EncryptMethod == "none" ? "dummy" : x.EncryptMethod;
-                singleproxy["password"] = x.Password;
-                if (std::all_of(x.Password.begin(), x.Password.end(), ::isdigit) && !x.Password.empty())
-                    singleproxy["password"].SetTag("str");
+                setYamlString(singleproxy["password"], x.Password);
                 singleproxy["protocol"] = x.Protocol;
                 singleproxy["obfs"] = x.OBFS;
                 if (clashR) {
@@ -567,11 +611,9 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
             case ProxyType::SOCKS5:
                 singleproxy["type"] = "socks5";
                 if (!x.Username.empty())
-                    singleproxy["username"] = x.Username;
+                    setYamlString(singleproxy["username"], x.Username);
                 if (!x.Password.empty()) {
-                    singleproxy["password"] = x.Password;
-                    if (std::all_of(x.Password.begin(), x.Password.end(), ::isdigit))
-                        singleproxy["password"].SetTag("str");
+                    setYamlString(singleproxy["password"], x.Password);
                 }
                 if (!scv.is_undef())
                     singleproxy["skip-cert-verify"] = scv.get();
@@ -580,11 +622,9 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
             case ProxyType::HTTPS:
                 singleproxy["type"] = "http";
                 if (!x.Username.empty())
-                    singleproxy["username"] = x.Username;
+                    setYamlString(singleproxy["username"], x.Username);
                 if (!x.Password.empty()) {
-                    singleproxy["password"] = x.Password;
-                    if (std::all_of(x.Password.begin(), x.Password.end(), ::isdigit))
-                        singleproxy["password"].SetTag("str");
+                    setYamlString(singleproxy["password"], x.Password);
                 }
                 singleproxy["tls"] = x.TLSSecure;
                 if (!scv.is_undef())
@@ -599,7 +639,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     continue;
                 }
                 singleproxy["type"] = "trojan";
-                singleproxy["password"] = x.Password;
+                setYamlString(singleproxy["password"], x.Password);
                 if (!x.ServerName.empty())
                     singleproxy["sni"] = x.ServerName;
                 else if (!x.Host.empty()) {
@@ -611,9 +651,6 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     }
                 } else if (!x.Alpn.empty())
                     singleproxy["alpn"].push_back(x.Alpn);
-                if (std::all_of(x.Password.begin(), x.Password.end(), ::isdigit) && !x.Password.empty()) {
-                    singleproxy["password"].SetTag("str");
-                }
                 if (!scv.is_undef())
                     singleproxy["skip-cert-verify"] = scv.get();
                 // Reality（与 VLESS 同承载字段）；Reality 节点指纹缺省需回退 random，
@@ -621,7 +658,10 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.PublicKey.empty()) {
                     singleproxy["reality-opts"]["public-key"] = x.PublicKey;
                     if (!x.ShortId.empty())
-                        singleproxy["reality-opts"]["short-id"] = x.ShortId;
+                        setYamlString(singleproxy["reality-opts"]["short-id"], x.ShortId, true);
+                    if (!x.SupportX25519MLKEM768.is_undef())
+                        singleproxy["reality-opts"]["support-x25519mlkem768"] =
+                            x.SupportX25519MLKEM768.get();
                 }
                 // 新增 mihomo 参数输出
                 if (!x.ClientFingerprint.empty())
@@ -653,7 +693,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 break;
             case ProxyType::Snell:
                 singleproxy["type"] = "snell";
-                singleproxy["psk"] = x.Password;
+                setYamlString(singleproxy["psk"], x.Password);
                 if (x.SnellVersion != 0)
                     singleproxy["version"] = x.SnellVersion;
                 if (!x.OBFS.empty()) {
@@ -661,8 +701,6 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     if (!x.Host.empty())
                         singleproxy["obfs-opts"]["host"] = x.Host;
                 }
-                if (std::all_of(x.Password.begin(), x.Password.end(), ::isdigit) && !x.Password.empty())
-                    singleproxy["password"].SetTag("str");
                 break;
             case ProxyType::WireGuard:
                 singleproxy["type"] = "wireguard";
@@ -681,7 +719,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
             case ProxyType::Hysteria:
                 singleproxy["type"] = "hysteria";
                 singleproxy["auth_str"] = x.Auth;
-                singleproxy["auth-str"] = x.Auth;
+                setYamlString(singleproxy["auth-str"], x.Auth);
                 singleproxy["up"] = x.UpMbps;
                 singleproxy["down"] = x.DownMbps;
                 if (!x.Ports.empty()) {
@@ -723,7 +761,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 break;
             case ProxyType::Hysteria2:
                 singleproxy["type"] = "hysteria2";
-                singleproxy["password"] = x.Password;
+                setYamlString(singleproxy["password"], x.Password);
                 if (!x.CaStr.empty()) {
                     singleproxy["ca-str"] = x.CaStr;
                 } else if (!x.PublicKey.empty()) {
@@ -743,7 +781,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.OBFSParam.empty())
                     singleproxy["obfs"] = x.OBFSParam;
                 if (!x.OBFSPassword.empty())
-                    singleproxy["obfs-password"] = x.OBFSPassword;
+                    setYamlString(singleproxy["obfs-password"], x.OBFSPassword);
                 if (!x.Ports.empty())
                     singleproxy["ports"] = x.Ports;
                 // mport 非 mihomo 字段：端口跳跃由上方 ports 输出，此处仅在 ports 缺省时补为合法 ports
@@ -769,13 +807,13 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
             case ProxyType::TUIC:
                 singleproxy["type"] = "tuic";
                 if (!x.Password.empty()) {
-                    singleproxy["password"] = x.Password;
+                    setYamlString(singleproxy["password"], x.Password);
                 }
                 if (!x.UserId.empty()) {
-                    singleproxy["uuid"] = x.UserId;
+                    setYamlString(singleproxy["uuid"], x.UserId);
                 }
                 if (!x.token.empty()) {
-                    singleproxy["token"] = x.token;
+                    setYamlString(singleproxy["token"], x.token);
                 }
                 if (!x.ServerName.empty()) {
                     singleproxy["sni"] = x.ServerName;
@@ -809,10 +847,10 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
             case ProxyType::AnyTLS:
                 singleproxy["type"] = "anytls";
                 if (!x.Password.empty()) {
-                    singleproxy["password"] = x.Password;
+                    setYamlString(singleproxy["password"], x.Password);
                 }
-                if (!x.Fingerprint.empty()) {
-                    singleproxy["client-fingerprint"] = x.Fingerprint;
+                if (!x.ClientFingerprint.empty()) {
+                    singleproxy["client-fingerprint"] = x.ClientFingerprint;
                 }
                 if (!udp.is_undef()) {
                     singleproxy["udp"] = udp.get();
@@ -838,10 +876,10 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
             case ProxyType::Mieru:
                 singleproxy["type"] = "mieru";
                 if (!x.Password.empty()) {
-                    singleproxy["password"] = x.Password;
+                    setYamlString(singleproxy["password"], x.Password);
                 }
                 if (!x.Username.empty()) {
-                    singleproxy["username"] = x.Username;
+                    setYamlString(singleproxy["username"], x.Username);
                 }
                 if (!x.Multiplexing.empty()) {
                     singleproxy["multiplexing"] = x.Multiplexing;
@@ -856,7 +894,7 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 break;
             case ProxyType::VLESS:
                 singleproxy["type"] = "vless";
-                singleproxy["uuid"] = x.UserId;
+                setYamlString(singleproxy["uuid"], x.UserId);
                 singleproxy["tls"] = x.TLSSecure;
                 if (!x.AlpnList.empty()) {
                     for (auto &item: x.AlpnList) {
@@ -886,14 +924,18 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.ServerName.empty())
                     singleproxy["servername"] = x.ServerName;
                 if (!x.ShortId.empty()) {
-                    singleproxy["reality-opts"]["short-id"] = x.ShortId;
+                    setYamlString(singleproxy["reality-opts"]["short-id"], x.ShortId, true);
                 }
+                // 仅在确有 reality 配置时写出，避免产生只含该项的孤立 reality-opts
+                if (!x.PublicKey.empty() && !x.SupportX25519MLKEM768.is_undef())
+                    singleproxy["reality-opts"]["support-x25519mlkem768"] =
+                        x.SupportX25519MLKEM768.get();
                 // 客户端指纹（uTLS）：显式设置时始终输出（含非 Reality 的普通 TLS 节点）；
                 // Reality 节点（有 public-key）即使未显式设置也需默认 random，否则 mihomo uTLS 无法握手。
+                // 不再从 Fingerprint 回退：所有 VLESS 构造路径都会设置 ClientFingerprint，
+                // 该回退是死代码，且会暗示证书指纹可以当 uTLS 指纹用
                 if (!x.ClientFingerprint.empty()) {
                     singleproxy["client-fingerprint"] = x.ClientFingerprint;
-                } else if (!x.Fingerprint.empty()) {
-                    singleproxy["client-fingerprint"] = x.Fingerprint;
                 } else if (!x.PublicKey.empty()) {
                     singleproxy["client-fingerprint"] = "random";
                 }
@@ -904,12 +946,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.PacketAddr.is_undef()) {
                     singleproxy["packet-addr"] = x.PacketAddr.get();
                 }
-                if (!x.GlobalPadding.is_undef()) {
-                    singleproxy["global-padding"] = x.GlobalPadding.get();
-                }
-                if (!x.AuthenticatedLength.is_undef()) {
-                    singleproxy["authenticated-length"] = x.AuthenticatedLength.get();
-                }
+                // global-padding / authenticated-length 不在此输出：它们是 VMess AEAD
+                // 的能力，mihomo 的 VlessOption 没有这两个字段，写了也只是被静默忽略。
                 // mihomo 的 ECH 键是 ech-opts{enable,config}；顶层 ech/ech-config 是历史误写不再输出。
                 // ech-opts 已随 MihomoTlsOpts 透传时以其为准，避免重复写
                 if (x.MihomoTlsOpts.find("\"ech-opts\"") == std::string::npos) {
@@ -1046,11 +1084,36 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 continue;
         }
 
+        // TLS 证书类字段，mihomo 的 VlessOption/VmessOption/TrojanOption 共有。
+        // CertFingerprint 是服务器证书 pinning，与 client-fingerprint 分属两个键
+        switch (x.Type) {
+            case ProxyType::VLESS:
+            case ProxyType::VMess:
+            case ProxyType::Trojan:
+            case ProxyType::AnyTLS:
+                if (!x.CertFingerprint.empty())
+                    setYamlString(singleproxy["fingerprint"], x.CertFingerprint);
+                if (!x.Certificate.empty())
+                    singleproxy["certificate"] = x.Certificate;
+                if (!x.PrivateKeyPem.empty())
+                    singleproxy["private-key"] = x.PrivateKeyPem;
+                break;
+            default:
+                break;
+        }
+
         // Snell UDP is available in mihomo-compatible Snell v3+ nodes.
         if (udp && (x.Type != ProxyType::Snell || x.SnellVersion >= 3) && x.Type != ProxyType::TUIC)
             singleproxy["udp"] = true;
         if (!clashR && !x.UnderlyingProxy.empty())
             singleproxy["dialer-proxy"] = x.UnderlyingProxy;
+        // BasicOption 拨号选项，所有协议共有；未配置的一律不写出
+        if (!x.MPTCP.is_undef())
+            singleproxy["mptcp"] = x.MPTCP.get();
+        if (!x.InterfaceName.empty())
+            singleproxy["interface-name"] = x.InterfaceName;
+        if (x.RoutingMark != 0)
+            singleproxy["routing-mark"] = x.RoutingMark;
         if (proxy_block)
             singleproxy.SetStyle(YAML::EmitterStyle::Block);
         else
@@ -1151,13 +1214,13 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
 }
 
 
-std::string formatterShortId(std::string input) {
-    std::string target = "short-id:";
+std::string beautifyStringTags(std::string input) {
+    std::string target = "!<str>";
     size_t startPos = input.find(target);
 
     while (startPos != std::string::npos) {
-        // 查找 short-id 值的结束边界：flow 风格到 ',' 或 '}'，block 风格到换行。
-        // 只找 '}' 会在 xhttp download-settings（short-id 后仍有 path/host 等键）
+        // 查找被锚定值的结束边界：flow 风格到 ',' 或 '}'，block 风格到换行。
+        // 只找 '}' 会在 xhttp download-settings（被锚定值后仍有 path/host 等键）
         // 及 block 风格下越界，吞掉后续键值对导致输出损坏。
         size_t valStart = startPos + target.length();
         size_t endPos = std::string::npos;
@@ -1168,17 +1231,15 @@ std::string formatterShortId(std::string input) {
         }
 
         if (endPos != std::string::npos) {
-            // 提取原始id
+            // 提取原始值
             std::string originalId = input.substr(startPos + target.length(), endPos - startPos - target.length());
 
-            // 去除原始id中的空格
-            originalId.erase(remove_if(originalId.begin(), originalId.end(), ::isspace), originalId.end());
+            // 去除首尾空格。被锚定的只会是形似布尔/数字的简单标量，
+            // 不含引号或反斜杠，直接包引号即安全。
+            originalId = trim(originalId);
 
-            // 添加引号
-            std::string modifiedId = " \"" + originalId + "\" ";
-
-            // 替换原始id为修改后的id
-            input.replace(startPos + target.length(), endPos - startPos - target.length(), modifiedId);
+            // 连标签一并替换为带引号的标量
+            input.replace(startPos, endPos - startPos, "\"" + originalId + "\"");
         }
 
         // 继续查找下一个实例
@@ -1203,7 +1264,7 @@ std::string proxyToClash(std::vector<Proxy> &nodes, const std::string &base_conf
     proxyToClash(nodes, yamlnode, extra_proxy_group, clashR, ext);
 
     if (ext.nodelist)
-        return formatterShortId(YAML::Dump(yamlnode));
+        return beautifyStringTags(YAML::Dump(yamlnode));
 
     /*
     if(ext.enable_rule_generator)
@@ -1212,7 +1273,7 @@ std::string proxyToClash(std::vector<Proxy> &nodes, const std::string &base_conf
     return YAML::Dump(yamlnode);
     */
     if (!ext.enable_rule_generator)
-        return formatterShortId(YAML::Dump(yamlnode));
+        return beautifyStringTags(YAML::Dump(yamlnode));
 
     if (!ext.managed_config_prefix.empty() || ext.clash_script) {
         if (yamlnode["mode"].IsDefined()) {
@@ -1224,7 +1285,7 @@ std::string proxyToClash(std::vector<Proxy> &nodes, const std::string &base_conf
 
         renderClashScript(yamlnode, ruleset_content_array, ext.managed_config_prefix, ext.clash_script,
                           ext.overwrite_original_rules, ext.clash_classical_ruleset);
-        return formatterShortId(YAML::Dump(yamlnode));
+        return beautifyStringTags(YAML::Dump(yamlnode));
     }
 
     std::string output_content = rulesetToClashStr(yamlnode, ruleset_content_array, ext.overwrite_original_rules,
@@ -1234,7 +1295,7 @@ std::string proxyToClash(std::vector<Proxy> &nodes, const std::string &base_conf
     //rulesetToClash(yamlnode, ruleset_content_array, ext.overwrite_original_rules, ext.clash_new_field_name);
     //std::string output_content = YAML::Dump(yamlnode);
     replaceAll(output_content, "!<str> ", "");
-    return formatterShortId(std::move(output_content));
+    return beautifyStringTags(std::move(output_content));
 }
 
 void replaceAll(std::string &input, const std::string &search, const std::string &replace) {
@@ -1470,8 +1531,8 @@ std::string proxyToSurge(std::vector<Proxy> &nodes, const std::string &base_conf
                     proxy += ", sni=" + x.SNI;
                 if (!scv.is_undef())
                     proxy += ", skip-cert-verify=" + scv.get_str();
-                if (!x.Fingerprint.empty())
-                    proxy += ", server-cert-fingerprint-sha256=" + x.Fingerprint;
+                if (!x.CertFingerprint.empty())
+                    proxy += ", server-cert-fingerprint-sha256=" + x.CertFingerprint;
                 if (!tls13.is_undef())
                     proxy += ", tls13=" + std::string(tls13 ? "true" : "false");
                 break;
@@ -1596,7 +1657,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
         std::string remark = x.Remark;
         std::string &hostname = x.Hostname, &sni = x.ServerName, &password = x.Password, &method = x.EncryptMethod, &
                         plugin = x.Plugin, &pluginopts = x.PluginOption, &protocol = x.Protocol, &protoparam = x.
-                        ProtocolParam, &flow = x.Flow, &pbk = x.PublicKey, &sid = x.ShortId, &fp = x.Fingerprint,
+                        ProtocolParam, &flow = x.Flow, &pbk = x.PublicKey, &sid = x.ShortId, &fp = x.ClientFingerprint,
                 &packet_encoding = x.PacketEncoding, &fake_type = x.FakeType, &mode = x.GRPCMode,
                 &obfs = x.OBFS, &obfsparam = x.OBFSParam, &obfsPassword = x.OBFSPassword, &id = x.UserId, &transproto =
                         x.TransferProtocol, &host = x.
@@ -1736,17 +1797,23 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                 std::string extraToExport = x.XhttpExtra;
                                 if (extraToExport.empty() &&
                                     (!x.XhttpScMaxEachPostBytes.empty() || !x.XhttpReuseSettings.empty() ||
-                                     !x.XhttpClashOpts.empty() || !x.XhttpNoGrpcHeader.is_undef())) {
+                                     !x.XhttpClashOpts.empty() || !x.XhttpNoGrpcHeader.is_undef() ||
+                                     !x.XhttpPaddingBytes.empty())) {
                                     rapidjson::Document ed;
                                     ed.SetObject();
                                     auto &ea = ed.GetAllocator();
-                                    if (!x.XhttpScMaxEachPostBytes.empty()) {
-                                        int scMax = atoi(x.XhttpScMaxEachPostBytes.c_str());
-                                        if (scMax > 0)
-                                            ed.AddMember("scMaxEachPostBytes", scMax, ea);
-                                    }
+                                    // scMaxEachPostBytes 同为 mihomo 只认数字的字段，
+                                    // 但旧的 atoi 会把范围 "1000000-2000000" 截成起始值
+                                    addExtraNumericOrRange(ed, "scMaxEachPostBytes",
+                                                           x.XhttpScMaxEachPostBytes, ea);
                                     if (!x.XhttpNoGrpcHeader.is_undef())
                                         ed.AddMember("noGRPCHeader", x.XhttpNoGrpcHeader.get(), ea);
+                                    // 顶层 x_padding_bytes 不是链接规范，mihomo 的 convert
+                                    // 只读 path/host/mode 三个顶层参数，padding 必须走 extra；
+                                    // 且那边断言 .(string)，只能是字符串
+                                    if (!x.XhttpPaddingBytes.empty())
+                                        ed.AddMember("xPaddingBytes",
+                                                     rapidjson::Value(x.XhttpPaddingBytes.c_str(), ea), ea);
                                     if (!x.XhttpReuseSettings.empty()) {
                                         rapidjson::Document rd;
                                         rd.Parse(x.XhttpReuseSettings.data());
@@ -1792,12 +1859,18 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                                 if (!cd.HasMember(f.mihomo))
                                                     continue;
                                                 const auto &v = cd[f.mihomo];
-                                                if (v.IsBool())
-                                                    ed.AddMember(rapidjson::Value(f.xray, ea),
-                                                                 rapidjson::Value(v.GetBool()), ea);
-                                                else if (v.IsString() && v.GetStringLength() > 0)
+                                                if (f.type == XhttpFieldType::Bool) {
+                                                    if (v.IsBool())
+                                                        ed.AddMember(rapidjson::Value(f.xray, ea),
+                                                                     rapidjson::Value(v.GetBool()), ea);
+                                                } else if (!v.IsString() || v.GetStringLength() == 0) {
+                                                    continue;
+                                                } else if (f.type == XhttpFieldType::Numeric) {
+                                                    addExtraNumericOrRange(ed, f.xray, v.GetString(), ea);
+                                                } else {
                                                     ed.AddMember(rapidjson::Value(f.xray, ea),
                                                                  rapidjson::Value(v.GetString(), ea), ea);
+                                                }
                                             }
                                         }
                                     }
@@ -3067,6 +3140,12 @@ static void addSingBoxCommonMembers(rapidjson::Value &proxy, const Proxy &x,
     if (!x.UnderlyingProxy.empty()) {
         proxy.AddMember("detour", rapidjson::Value(x.UnderlyingProxy.c_str(), allocator), allocator);
     }
+    if (!x.InterfaceName.empty())
+        proxy.AddMember("bind_interface", rapidjson::Value(x.InterfaceName.c_str(), allocator), allocator);
+    if (x.RoutingMark != 0)
+        proxy.AddMember("routing_mark", x.RoutingMark, allocator);
+    if (!x.MPTCP.is_undef())
+        proxy.AddMember("tcp_multi_path", x.MPTCP.get(), allocator);
 }
 
 static void addHeaders(rapidjson::Value &transport, const Proxy &x,
@@ -3163,6 +3242,10 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json,
                 proxy.AddMember("uuid", rapidjson::StringRef(x.UserId.c_str()), allocator);
                 proxy.AddMember("alter_id", x.AlterId, allocator);
                 proxy.AddMember("security", rapidjson::StringRef(x.EncryptMethod.c_str()), allocator);
+                if (!x.GlobalPadding.is_undef())
+                    proxy.AddMember("global_padding", x.GlobalPadding.get(), allocator);
+                if (!x.AuthenticatedLength.is_undef())
+                    proxy.AddMember("authenticated_length", x.AuthenticatedLength.get(), allocator);
 
                 auto transport = buildSingBoxTransport(x, allocator);
                 if (!transport.ObjectEmpty())
@@ -3417,10 +3500,10 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json,
                     auto alpns = vectorToJsonArray(x.AlpnList, allocator);
                     tls.AddMember("alpn", alpns, allocator);
                 }
-                if (!x.Fingerprint.empty()) {
+                if (!x.ClientFingerprint.empty()) {
                     rapidjson::Value utls(rapidjson::kObjectType);
                     utls.AddMember("enabled", true, allocator);
-                    utls.AddMember("fingerprint", rapidjson::StringRef(x.Fingerprint.c_str()), allocator);
+                    utls.AddMember("fingerprint", rapidjson::StringRef(x.ClientFingerprint.c_str()), allocator);
                     tls.AddMember("utls", utls, allocator);
                 }
                 proxy.AddMember("tls", tls, allocator);

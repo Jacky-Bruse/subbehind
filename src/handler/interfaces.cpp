@@ -705,7 +705,7 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
             if (ext.nodelist) {
                 YAML::Node yamlnode;
                 proxyToClash(nodes, yamlnode, dummy_group, argTarget == "clashr", ext);
-                output_content = formatterShortId(YAML::Dump(yamlnode));
+                output_content = beautifyStringTags(YAML::Dump(yamlnode));
             } else {
                 if (render_template(fetchFile(lClashBase, proxy, global.cacheConfig), tpl_args, base_content,
                                     global.templatePath) != 0) {
@@ -1139,7 +1139,7 @@ std::string surgeConfToClash(RESPONSE_CALLBACK_ARGS) {
 
     response.headers["profile-update-interval"] = std::to_string(global.updateInterval / 3600);
     writeLog(0, "Conversion completed.", LOG_LEVEL_INFO);
-    return YAML::Dump(clash);
+    return beautifyStringTags(YAML::Dump(clash));
 }
 
 std::string getProfile(RESPONSE_CALLBACK_ARGS) {

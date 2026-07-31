@@ -11,32 +11,38 @@ using String = std::string;
 using StringArray = std::vector<String>;
 using StringMap = std::map<String, String>;
 
-// mihomo xhttp-opts 文档标量字段 ↔ Xray xhttp extra 键名映射
-// Xray 侧见 infra/conf/transport_method.go 的 SplitHTTPConfig；
-// Int32Range 字段（sessionIDLength 等）字符串形式即合法，无需转数值
+// mihomo xhttp-opts 文档标量字段 ↔ Xray xhttp extra 键名映射。
+// 键名以 Xray infra/conf/transport_method.go 的 SplitHTTPConfig 为准；
+// 类型以链接消费侧 mihomo common/convert/v.go 的 parseXHTTPExtra 为准——
+// 它的类型断言并不统一：多数 .(string)，布尔 .(bool)，而 uplinkChunkSize 与
+// scMinPostsIntervalMs 只接受 .(float64)，写成字符串会被静默丢弃。
+// Numeric 字段按值的形态定型：纯数字走 JSON 数字（两端都认），范围值只能留字
+// 符串（Xray 的 Int32Range 收，mihomo 不收范围，无解）。
+enum class XhttpFieldType { String, Bool, Numeric };
 struct XhttpDocField
 {
     const char *mihomo;
     const char *xray;
-    bool isBool;
+    XhttpFieldType type;
 };
 inline constexpr XhttpDocField XHTTP_DOC_FIELDS[] = {
-    {"x-padding-obfs-mode", "xPaddingObfsMode", true},
-    {"x-padding-key", "xPaddingKey", false},
-    {"x-padding-header", "xPaddingHeader", false},
-    {"x-padding-placement", "xPaddingPlacement", false},
-    {"x-padding-method", "xPaddingMethod", false},
-    {"uplink-http-method", "uplinkHTTPMethod", false},
-    {"session-placement", "sessionIDPlacement", false},
-    {"session-key", "sessionIDKey", false},
-    {"session-table", "sessionIDTable", false},
-    {"session-length", "sessionIDLength", false},
-    {"seq-placement", "seqPlacement", false},
-    {"seq-key", "seqKey", false},
-    {"uplink-data-placement", "uplinkDataPlacement", false},
-    {"uplink-data-key", "uplinkDataKey", false},
-    {"uplink-chunk-size", "uplinkChunkSize", false},
-    {"sc-min-posts-interval-ms", "scMinPostsIntervalMs", false},
+    {"x-padding-obfs-mode", "xPaddingObfsMode", XhttpFieldType::Bool},
+    {"x-padding-key", "xPaddingKey", XhttpFieldType::String},
+    {"x-padding-header", "xPaddingHeader", XhttpFieldType::String},
+    {"x-padding-placement", "xPaddingPlacement", XhttpFieldType::String},
+    {"x-padding-method", "xPaddingMethod", XhttpFieldType::String},
+    {"uplink-http-method", "uplinkHTTPMethod", XhttpFieldType::String},
+    {"session-placement", "sessionIDPlacement", XhttpFieldType::String},
+    {"session-key", "sessionIDKey", XhttpFieldType::String},
+    {"session-table", "sessionIDTable", XhttpFieldType::String},
+    // sessionIDLength 是少数同时收 string 与 float64 的字段，保持字符串即可
+    {"session-length", "sessionIDLength", XhttpFieldType::String},
+    {"seq-placement", "seqPlacement", XhttpFieldType::String},
+    {"seq-key", "seqKey", XhttpFieldType::String},
+    {"uplink-data-placement", "uplinkDataPlacement", XhttpFieldType::String},
+    {"uplink-data-key", "uplinkDataKey", XhttpFieldType::String},
+    {"uplink-chunk-size", "uplinkChunkSize", XhttpFieldType::Numeric},
+    {"sc-min-posts-interval-ms", "scMinPostsIntervalMs", XhttpFieldType::Numeric},
 };
 
 // mihomo VlessOption 顶层 TLS 伪装层选项（download-settings 的 proxy 部分同样适用）
@@ -270,6 +276,19 @@ struct Proxy {
     // ===== mTLS =====
     String Certificate;
     String PrivateKeyPem;
+    // reality-opts.support-x25519mlkem768：控制 ClientHello 是否保留 X25519MLKEM768
+    // 密钥共享组。用 tribool 以区分"未配置"与"显式 false"，未配置时不写出。
+    tribool SupportX25519MLKEM768;
+
+    // ===== BasicOption 拨号选项（mihomo 所有出站协议共有）=====
+    // sing-box 侧对应 tcp_multi_path / bind_interface / routing_mark
+    tribool MPTCP;            // mptcp，tribool 以区分未配置与显式 false
+    String InterfaceName;     // interface-name
+    int RoutingMark = 0;      // routing-mark，0 即未配置（与 mihomo 的 omitempty 一致）
+    // 服务器证书指纹校验（mihomo 的 fingerprint，SHA256 十六进制）。
+    // 不能复用上面的 Fingerprint：那个字段在 vless/trojan/anytls 路径上实际承载的是
+    // 客户端指纹，还被链接导出的 fp= 和 sing-box 的 utls.fingerprint 消费。
+    String CertFingerprint;
 
     // ===== WebSocket =====
     uint32_t WsMaxEarlyData = 0;
