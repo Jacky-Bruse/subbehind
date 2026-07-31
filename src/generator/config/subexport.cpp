@@ -2038,7 +2038,9 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                         rapidjson::Document dsd;
                                         dsd.Parse(dsJson.data());
                                         if (!dsd.HasParseError() && dsd.IsObject()) {
-                                            if (ed.HasMember("downloadSettings"))
+                                            // RemoveMember 只移除首个同名成员，
+                                            // 输入 extra 自带重复键时需循环清除
+                                            while (ed.HasMember("downloadSettings"))
                                                 ed.RemoveMember("downloadSettings");
                                             ed.AddMember("downloadSettings",
                                                          rapidjson::Value(dsd, ea), ea);

@@ -3033,6 +3033,104 @@ void test_legacy_session_aliases_are_source_scoped() {
                 fromXray.XhttpClashOpts);
 }
 
+// 来源隔离只挡住了内部映射，原始 extra 仍被原样带进链接：
+// Xray 的 extra.sessionPlacement 对 Xray 自己是无效未知字段，但一旦原样写进
+// VLESS URI，mihomo 读链接时会用兼容分支重新激活它——等于把 Xray 忽略的配置
+// 洗白成了生效配置。这些键对 Xray 无意义，导出前应从 effective extra 中剔除。
+void test_xray_legacy_aliases_do_not_leak_into_link() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "extra": {"sessionPlacement": "header", "sessionKey": "sk", "xPaddingBytes": "100-500"}
+        }
+      }
+    }
+  ]
+})";
+    std::vector<Proxy> nodes{parse_v2ray_conf(content)};
+    // 内部不激活（已有保障）
+    require(nodes[0].XhttpClashOpts.find("session-placement") == std::string::npos,
+            "legacy alias must not be activated internally");
+
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    auto pos = decoded.find("extra=");
+    require(pos != std::string::npos, "expected extra= in link");
+    auto end = decoded.find_first_of("&#", pos);
+    if (end == std::string::npos) end = decoded.size();
+    const std::string extraJson = urlDecode(decoded.substr(pos + 6, end - pos - 6));
+
+    require(extraJson.find("sessionPlacement") == std::string::npos,
+            "legacy alias must not leak into the exported link, got: " + extraJson);
+    require(extraJson.find("sessionKey") == std::string::npos,
+            "legacy alias must not leak into the exported link, got: " + extraJson);
+    // 有效字段不受影响
+    require(extraJson.find("xPaddingBytes") != std::string::npos,
+            "valid fields must survive, got: " + extraJson);
+}
+
+// nested 优先规则要按"成员是否存在"判断：extra 里显式写 downloadSettings: null
+// 表示明确没有下行配置，不能再回退到旧的顶层参数
+void test_link_nested_null_download_settings_does_not_fall_back() {
+    const std::string extra = urlEncode(R"({"downloadSettings":null})");
+    const std::string legacy = urlEncode(
+        R"({"address":"legacy-dl.example.com","port":1111,"security":"tls"})");
+    const Proxy node = parse_link(
+        "vless://12345678-1234-1234-1234-123456789012@x.example.com:443"
+        "?security=tls&type=xhttp&path=%2Fup&downloadSettings=" + legacy + "&extra=" + extra +
+        "#nested-null");
+    require(node.XhttpDownloadSettings.find("legacy-dl.example.com") == std::string::npos,
+            "explicit nested null must not fall back to the legacy param, got: " +
+                node.XhttpDownloadSettings);
+    require(node.XhttpDownload.empty(),
+            "explicit nested null means no download settings, got: " + node.XhttpDownload);
+}
+
+// RemoveMember 只移除首个同名成员，输入 extra 自带重复键时会有残留
+void test_link_export_removes_all_duplicate_download_settings() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "extra": {"downloadSettings": {"address": "a.example.com", "port": 1},
+                    "downloadSettings": {"address": "b.example.com", "port": 2}}
+        }
+      }
+    }
+  ]
+})";
+    std::vector<Proxy> nodes{parse_v2ray_conf(content)};
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    auto pos = decoded.find("extra=");
+    require(pos != std::string::npos, "expected extra= in link");
+    auto end = decoded.find_first_of("&#", pos);
+    if (end == std::string::npos) end = decoded.size();
+    const std::string extraJson = urlDecode(decoded.substr(pos + 6, end - pos - 6));
+
+    const size_t first = extraJson.find("\"downloadSettings\"");
+    require(first != std::string::npos, "expected downloadSettings, got: " + extraJson);
+    require(extraJson.find("\"downloadSettings\"", first + 1) == std::string::npos,
+            "duplicate downloadSettings keys must all be removed, got: " + extraJson);
+}
+
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
 // 平铺的 public-key/short-id 会被 mihomo 静默忽略导致下行丢失 reality 配置
 void test_clash_xhttp_download_settings_reality_opts_nested() {
@@ -3782,6 +3880,9 @@ int main() {
         test_vless_link_extra_legacy_session_aliases();
         test_xray_download_settings_allow_insecure();
         test_download_settings_empty_tls_opts_preserved();
+        test_xray_legacy_aliases_do_not_leak_into_link();
+        test_link_nested_null_download_settings_does_not_fall_back();
+        test_link_export_removes_all_duplicate_download_settings();
         test_link_extra_download_settings_is_parsed();
         test_link_nested_download_settings_wins_over_legacy_param();
         test_link_export_merges_download_settings_into_existing_extra();

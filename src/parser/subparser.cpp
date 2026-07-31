@@ -411,7 +411,15 @@ static XhttpEffective resolveXhttpSettings(const rapidjson::Value &xs) {
     if (xs.HasMember("extra")) {
         const auto &ex = xs["extra"];
         if (ex.IsObject()) {
-            eff.extra = getCompactJsonString(ex);
+            // 旧的 session 别名对当前 Xray 是无效未知字段，剔除后再保存：
+            // 否则原样带进链接会被 mihomo 的兼容分支重新激活
+            rapidjson::Document cleaned;
+            cleaned.CopyFrom(ex, cleaned.GetAllocator());
+            for (const char *legacy : {"sessionPlacement", "sessionKey"}) {
+                while (cleaned.HasMember(legacy))
+                    cleaned.RemoveMember(legacy);
+            }
+            eff.extra = getCompactJsonString(cleaned);
             eff.downloadSettings = getJsonMemberPreserve(ex, "downloadSettings");
         } else if (!ex.IsNull()) {
             // 非对象非 null：Xray 会报 Failed to unmarshal "extra"
@@ -447,6 +455,9 @@ static bool assignXhttpFields(Proxy &node, const std::string &mode, const std::s
                               bool allowLegacySessionAliases = false) {
     node.XhttpMode = mode;
     node.XhttpExtra = extra;
+    // extra 内一旦出现 downloadSettings 成员（哪怕是 null）即视为已表态，
+    // 旧的顶层参数只在它完全不存在时才作为兼容路径生效
+    bool nestedDownloadSeen = false;
     if (!extra.empty()) {
         rapidjson::Document d;
         d.Parse(extra.data());
@@ -457,15 +468,20 @@ static bool assignXhttpFields(Proxy &node, const std::string &mode, const std::s
                 node.XhttpNoGrpcHeader = d["noGRPCHeader"].GetBool();
             // Xray 的正式位置就是 SplitHTTPConfig.DownloadSettings，即 extra 内。
             // 旧的顶层参数仅作兼容，两者同时存在时以 extra 为准。
-            if (d.HasMember("downloadSettings") && d["downloadSettings"].IsObject()) {
-                const std::string nested = getCompactJsonString(d["downloadSettings"]);
-                if (!nested.empty()) {
-                    node.XhttpDownloadSettings = nested;
+            if (d.HasMember("downloadSettings")) {
+                const auto &nds = d["downloadSettings"];
+                if (nds.IsObject()) {
+                    node.XhttpDownloadSettings = getCompactJsonString(nds);
                     bool nestedOk = true;
-                    node.XhttpDownload = xrayDownloadToMihomoJson(nested, &nestedOk);
+                    node.XhttpDownload = xrayDownloadToMihomoJson(node.XhttpDownloadSettings, &nestedOk);
                     if (!nestedOk)
                         return false;
+                } else if (!nds.IsNull()) {
+                    // 既非对象也非 null：Xray 侧同样无法构建
+                    return false;
                 }
+                // nested 存在即已表态（null 表示明确没有下行），不再回退旧顶层参数
+                nestedDownloadSeen = true;
             }
             if (d.HasMember("headers") && d["headers"].IsObject() && !d["headers"].ObjectEmpty()) {
                 rapidjson::StringBuffer hbuf;
@@ -529,7 +545,7 @@ static bool assignXhttpFields(Proxy &node, const std::string &mode, const std::s
     }
     // extra.downloadSettings 是 Xray 的正式位置，若已从中取到就不再被旧的
     // 顶层参数覆盖；顶层仅作旧格式兼容
-    if (node.XhttpDownloadSettings.empty() && !download_settings.empty()) {
+    if (!nestedDownloadSeen && !download_settings.empty()) {
         node.XhttpDownloadSettings = download_settings;
         bool dsOk = true;
         node.XhttpDownload = xrayDownloadToMihomoJson(download_settings, &dsOk);
