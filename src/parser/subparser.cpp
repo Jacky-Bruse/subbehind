@@ -438,8 +438,13 @@ static XhttpEffective resolveXhttpSettings(const rapidjson::Value &xs) {
     return eff;
 }
 
+// allowLegacySessionAliases：仅 VLESS URI 来源为 true。mihomo 的链接转换器兼容
+// sessionPlacement/sessionKey 两个旧名，而 Xray 的 SplitHTTPConfig 只认
+// sessionIDPlacement/sessionIDKey，会把旧名当未知字段忽略——按来源隔离才能既保住
+// 旧链接兼容，又不凭空放大 Xray 配置的语义。
 static bool assignXhttpFields(Proxy &node, const std::string &mode, const std::string &extra,
-                              const std::string &download_settings) {
+                              const std::string &download_settings,
+                              bool allowLegacySessionAliases = false) {
     node.XhttpMode = mode;
     node.XhttpExtra = extra;
     if (!extra.empty()) {
@@ -450,6 +455,18 @@ static bool assignXhttpFields(Proxy &node, const std::string &mode, const std::s
             GetMember(d, "xPaddingBytes", node.XhttpPaddingBytes);
             if (d.HasMember("noGRPCHeader") && d["noGRPCHeader"].IsBool())
                 node.XhttpNoGrpcHeader = d["noGRPCHeader"].GetBool();
+            // Xray 的正式位置就是 SplitHTTPConfig.DownloadSettings，即 extra 内。
+            // 旧的顶层参数仅作兼容，两者同时存在时以 extra 为准。
+            if (d.HasMember("downloadSettings") && d["downloadSettings"].IsObject()) {
+                const std::string nested = getCompactJsonString(d["downloadSettings"]);
+                if (!nested.empty()) {
+                    node.XhttpDownloadSettings = nested;
+                    bool nestedOk = true;
+                    node.XhttpDownload = xrayDownloadToMihomoJson(nested, &nestedOk);
+                    if (!nestedOk)
+                        return false;
+                }
+            }
             if (d.HasMember("headers") && d["headers"].IsObject() && !d["headers"].ObjectEmpty()) {
                 rapidjson::StringBuffer hbuf;
                 rapidjson::Writer<rapidjson::StringBuffer> hw(hbuf);
@@ -483,6 +500,8 @@ static bool assignXhttpFields(Proxy &node, const std::string &mode, const std::s
                 // mihomo 的 parseXHTTPExtra 接受两个旧别名，此处一并兼容
                 const char *key = f.xray;
                 if (!d.HasMember(key)) {
+                    if (!allowLegacySessionAliases)
+                        continue;
                     const std::string alias = std::string(f.xray) == "sessionIDPlacement"
                                                   ? "sessionPlacement"
                                                   : (std::string(f.xray) == "sessionIDKey" ? "sessionKey" : "");
@@ -508,8 +527,10 @@ static bool assignXhttpFields(Proxy &node, const std::string &mode, const std::s
             }
         }
     }
-    node.XhttpDownloadSettings = download_settings;
-    if (!download_settings.empty()) {
+    // extra.downloadSettings 是 Xray 的正式位置，若已从中取到就不再被旧的
+    // 顶层参数覆盖；顶层仅作旧格式兼容
+    if (node.XhttpDownloadSettings.empty() && !download_settings.empty()) {
+        node.XhttpDownloadSettings = download_settings;
         bool dsOk = true;
         node.XhttpDownload = xrayDownloadToMihomoJson(download_settings, &dsOk);
         if (!dsOk)
@@ -2852,7 +2873,8 @@ void explodeStdVless(std::string vless, Proxy &node) {
                    tls, pbk, sid, fp, sni, alpnList, packet_encoding, tribool(), tribool(), tribool(),
                    tribool(), "", tribool(), encryption);
     if (net == "xhttp") {
-        if (!assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings)) {
+        // VLESS URI 来源：保留对 mihomo 旧链接别名的兼容
+        if (!assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings, true)) {
             writeLog(0, "Skipping link: invalid downloadSettings", LOG_LEVEL_WARNING);
             // 必须清掉 Type：vlessConstruct 已把它设为 VLESS，而 explodeSub 仅以
             // Type == Unknown 判断是否丢弃，否则这里的 return 拦不住外层

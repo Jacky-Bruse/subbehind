@@ -2916,6 +2916,123 @@ void test_xray_download_settings_xtls_is_rejected() {
             "legacy xtls must be rejected like Xray does, not downgraded to plaintext");
 }
 
+// S4：Xray 的正式结构就是 SplitHTTPConfig.DownloadSettings，即 extra.downloadSettings。
+// 导出侧已按此位置生成，解析侧却只读旧的顶层参数，导致项目自己生成的标准形式
+// 在"链接 → 内部字段 → Clash"这条链路上丢失下行配置（链接原样转链接因保留了
+// XhttpExtra 而不会立刻暴露）。
+void test_link_extra_download_settings_is_parsed() {
+    const std::string extra = urlEncode(
+        R"({"downloadSettings":{"address":"inner-dl.example.com","port":2222,"security":"tls"}})");
+    const Proxy node = parse_link(
+        "vless://12345678-1234-1234-1234-123456789012@x.example.com:443"
+        "?security=tls&type=xhttp&path=%2Fup&extra=" + extra + "#nested-ds");
+    require(node.XhttpDownloadSettings.find("inner-dl.example.com") != std::string::npos,
+            "extra.downloadSettings must be extracted, got: " + node.XhttpDownloadSettings);
+    require(node.XhttpDownload.find("inner-dl.example.com") != std::string::npos,
+            "extra.downloadSettings must reach canonical, got: " + node.XhttpDownload);
+}
+
+// 顶层参数仅作旧格式兼容，与 extra 内的同时出现时以 extra 为准
+void test_link_nested_download_settings_wins_over_legacy_param() {
+    const std::string extra = urlEncode(
+        R"({"downloadSettings":{"address":"inner-dl.example.com","port":2222,"security":"tls"}})");
+    const std::string legacy = urlEncode(
+        R"({"address":"legacy-dl.example.com","port":1111,"security":"tls"})");
+    const Proxy node = parse_link(
+        "vless://12345678-1234-1234-1234-123456789012@x.example.com:443"
+        "?security=tls&type=xhttp&path=%2Fup&downloadSettings=" + legacy + "&extra=" + extra +
+        "#both");
+    require(node.XhttpDownloadSettings.find("inner-dl.example.com") != std::string::npos,
+            "nested extra.downloadSettings must win, got: " + node.XhttpDownloadSettings);
+    require(node.XhttpDownloadSettings.find("legacy-dl.example.com") == std::string::npos,
+            "legacy top-level param must lose to nested, got: " + node.XhttpDownloadSettings);
+}
+
+// 导出侧：已有 extra 时也必须把 downloadSettings 并入，而不是跳过合成；
+// 且同名键只能有一个（rapidjson 的 AddMember 不去重）
+void test_link_export_merges_download_settings_into_existing_extra() {
+    // Xray 输入：外层直写 headers（构成 extra）+ 外层 downloadSettings（不在 extra 内）
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "headers": {"X-Test": "1"},
+          "downloadSettings": {"address": "dl.example.com", "port": 8443, "security": "tls"}
+        }
+      }
+    }
+  ]
+})";
+    std::vector<Proxy> nodes{parse_v2ray_conf(content)};
+    require(!nodes[0].XhttpExtra.empty(), "headers should have produced an extra");
+
+    extra_settings ext;
+    constexpr int kVlessMask = 32;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+    auto pos = decoded.find("extra=");
+    require(pos != std::string::npos, "expected extra= in link");
+    auto end = decoded.find_first_of("&#", pos);
+    if (end == std::string::npos) end = decoded.size();
+    const std::string extraJson = urlDecode(decoded.substr(pos + 6, end - pos - 6));
+
+    rapidjson::Document d;
+    d.Parse(extraJson.data());
+    require(!d.HasParseError() && d.IsObject(), "extra must be valid JSON: " + extraJson);
+    require(d.HasMember("downloadSettings"),
+            "downloadSettings must be merged into the existing extra, got: " + extraJson);
+    // 必须是原样透传的那份，而不是回落到 canonical 重新生成的：
+    // 后者会补 network 并物化父节点值，内容与原配置不同
+    require(d["downloadSettings"]["port"].GetInt() == 8443,
+            "passthrough content must be used, got: " + extraJson);
+    require(!d["downloadSettings"].HasMember("network"),
+            "passthrough must not be replaced by a synthesised config, got: " + extraJson);
+    require(d.HasMember("headers"), "existing extra content must survive, got: " + extraJson);
+    // 同名键只应出现一次
+    size_t first = extraJson.find("\"downloadSettings\"");
+    require(extraJson.find("\"downloadSettings\"", first + 1) == std::string::npos,
+            "downloadSettings must not be duplicated, got: " + extraJson);
+}
+
+// S2：旧 session 别名要按来源隔离。mihomo 的链接转换器兼容它们，所以 VLESS URI
+// 必须继续接受；而 Xray 的 SplitHTTPConfig 只有 sessionIDPlacement/sessionIDKey，
+// 旧键作为未知字段会被忽略，Xray JSON 路径就不该激活。
+void test_legacy_session_aliases_are_source_scoped() {
+    // URI 来源：保留兼容
+    const std::string extra = urlEncode(R"({"sessionPlacement":"query","sessionKey":"sk"})");
+    const Proxy fromUri = parse_link(
+        "vless://12345678-1234-1234-1234-123456789012@x.example.com:443"
+        "?security=tls&type=xhttp&path=%2Fup&extra=" + extra + "#uri-alias");
+    require(fromUri.XhttpClashOpts.find("\"session-placement\":\"query\"") != std::string::npos,
+            "URI extra must keep accepting legacy aliases, got: " + fromUri.XhttpClashOpts);
+
+    // Xray JSON 来源：不得激活
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {"path": "/up", "extra": {"sessionPlacement": "header"}}
+      }
+    }
+  ]
+})";
+    const Proxy fromXray = parse_v2ray_conf(content);
+    require(fromXray.XhttpClashOpts.find("session-placement") == std::string::npos,
+            "Xray extra must ignore legacy aliases like Xray itself does, got: " +
+                fromXray.XhttpClashOpts);
+}
+
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
 // 平铺的 public-key/short-id 会被 mihomo 静默忽略导致下行丢失 reality 配置
 void test_clash_xhttp_download_settings_reality_opts_nested() {
@@ -3665,6 +3782,10 @@ int main() {
         test_vless_link_extra_legacy_session_aliases();
         test_xray_download_settings_allow_insecure();
         test_download_settings_empty_tls_opts_preserved();
+        test_link_extra_download_settings_is_parsed();
+        test_link_nested_download_settings_wins_over_legacy_param();
+        test_link_export_merges_download_settings_into_existing_extra();
+        test_legacy_session_aliases_are_source_scoped();
         test_vless_link_invalid_download_settings_actually_drops_node();
         test_link_malformed_download_settings_drops_node();
         test_xray_download_settings_alpn_non_string_elements_are_safe();

@@ -1939,24 +1939,28 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                             {
                                 // XhttpExtra (from Xray input) already encodes all extra fields.
                                 // For Clash-parsed nodes, synthesize extra from individual fields.
-                                std::string extraToExport = x.XhttpExtra;
-                                if (extraToExport.empty() &&
-                                    (!x.XhttpScMaxEachPostBytes.empty() || !x.XhttpReuseSettings.empty() ||
-                                     !x.XhttpClashOpts.empty() || !x.XhttpNoGrpcHeader.is_undef() ||
-                                     !x.XhttpPaddingBytes.empty() || !x.XhttpHeaders.empty() ||
-                                     !x.XhttpDownloadSettings.empty() || !x.XhttpDownload.empty())) {
-                                    rapidjson::Document ed;
-                                    ed.SetObject();
-                                    auto &ea = ed.GetAllocator();
-                                    // scMaxEachPostBytes 同为 mihomo 只认数字的字段，
-                                    // 但旧的 atoi 会把范围 "1000000-2000000" 截成起始值
+                                // 先取已有 extra（Xray 输入原样保留），没有则由各
+                                // 独立字段合成；随后无论哪种来源都把 downloadSettings
+                                // 并进去——它在 Xray 里的正式位置就是 extra 内。
+                                rapidjson::Document ed;
+                                ed.SetObject();
+                                auto &ea = ed.GetAllocator();
+                                bool hasExtra = false;
+                                if (!x.XhttpExtra.empty()) {
+                                    rapidjson::Document src;
+                                    src.Parse(x.XhttpExtra.data());
+                                    if (!src.HasParseError() && src.IsObject()) {
+                                        for (const auto &kv : src.GetObject())
+                                            ed.AddMember(rapidjson::Value(kv.name, ea),
+                                                         rapidjson::Value(kv.value, ea), ea);
+                                        hasExtra = true;
+                                    }
+                                }
+                                if (!hasExtra) {
                                     addExtraNumericOrRange(ed, "scMaxEachPostBytes",
                                                            x.XhttpScMaxEachPostBytes, ea);
                                     if (!x.XhttpNoGrpcHeader.is_undef())
                                         ed.AddMember("noGRPCHeader", x.XhttpNoGrpcHeader.get(), ea);
-                                    // 顶层 x_padding_bytes 不是链接规范，mihomo 的 convert
-                                    // 只读 path/host/mode 三个顶层参数，padding 必须走 extra；
-                                    // 且那边断言 .(string)，只能是字符串
                                     if (!x.XhttpPaddingBytes.empty())
                                         ed.AddMember("xPaddingBytes",
                                                      rapidjson::Value(x.XhttpPaddingBytes.c_str(), ea), ea);
@@ -1966,29 +1970,13 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                         if (!hd.HasParseError() && hd.IsObject() && !hd.ObjectEmpty())
                                             ed.AddMember("headers", rapidjson::Value(hd, ea), ea);
                                     }
-                                    // downloadSettings 必须放在 extra 内：mihomo 的
-                                    // convert 只读 extra["downloadSettings"]。原始 Xray
-                                    // 输入原样透传，不补 network，以免改变其默认网络行为；
-                                    // 从 mihomo canonical 生成的才需要完整 StreamConfig。
-                                    {
-                                        std::string dsJson = x.XhttpDownloadSettings;
-                                        if (dsJson.empty())
-                                            dsJson = mihomoDownloadToXrayJson(x, x.XhttpDownload);
-                                        if (!dsJson.empty()) {
-                                            rapidjson::Document dsd;
-                                            dsd.Parse(dsJson.data());
-                                            if (!dsd.HasParseError() && dsd.IsObject())
-                                                ed.AddMember("downloadSettings",
-                                                             rapidjson::Value(dsd, ea), ea);
-                                        }
-                                    }
                                     if (!x.XhttpReuseSettings.empty()) {
                                         rapidjson::Document rd;
                                         rd.Parse(x.XhttpReuseSettings.data());
                                         if (!rd.HasParseError() && rd.IsObject()) {
                                             rapidjson::Value xmux(rapidjson::kObjectType);
                                             bool hasXmux = false;
-                                            const struct { const char *mihomo; const char *xray; } reuseMap[] = {
+                                            static const struct { const char *mihomo; const char *xray; } reuseMap[] = {
                                                 {"max-connections",   "maxConnections"},
                                                 {"max-concurrency",   "maxConcurrency"},
                                                 {"c-max-reuse-times", "cMaxReuseTimes"},
@@ -1998,14 +1986,11 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                             for (const auto &f : reuseMap) {
                                                 if (rd.HasMember(f.mihomo) && rd[f.mihomo].IsString()
                                                     && rd[f.mihomo].GetStringLength() > 0) {
-                                                    xmux.AddMember(
-                                                        rapidjson::Value(f.xray, ea),
-                                                        rapidjson::Value(rd[f.mihomo].GetString(), ea), ea);
+                                                    xmux.AddMember(rapidjson::Value(f.xray, ea),
+                                                                   rapidjson::Value(rd[f.mihomo].GetString(), ea), ea);
                                                     hasXmux = true;
                                                 }
                                             }
-                                            // Xray XmuxConfig.HKeepAlivePeriod 是 int64，
-                                            // 无字符串反序列化，必须以数值写出
                                             if (rd.HasMember("h-keep-alive-period") &&
                                                 rd["h-keep-alive-period"].IsString()) {
                                                 int hkap = atoi(rd["h-keep-alive-period"].GetString());
@@ -2019,7 +2004,6 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                         }
                                     }
                                     if (!x.XhttpClashOpts.empty()) {
-                                        // clash 文档键 → Xray extra 驼峰键（映射表见 proxy.h）
                                         rapidjson::Document cd;
                                         cd.Parse(x.XhttpClashOpts.data());
                                         if (!cd.HasParseError() && cd.IsObject()) {
@@ -2042,12 +2026,31 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                             }
                                         }
                                     }
-                                    if (!ed.ObjectEmpty()) {
-                                        rapidjson::StringBuffer ebuf;
-                                        rapidjson::Writer<rapidjson::StringBuffer> ew(ebuf);
-                                        ed.Accept(ew);
-                                        extraToExport = ebuf.GetString();
+                                }
+                                {
+                                    // 原始 Xray 输入原样透传，不补 network，以免改变其
+                                    // 默认网络行为；从 mihomo canonical 生成的才需要完整
+                                    // StreamConfig。用替换而非追加，避免同名键重复。
+                                    std::string dsJson = x.XhttpDownloadSettings;
+                                    if (dsJson.empty())
+                                        dsJson = mihomoDownloadToXrayJson(x, x.XhttpDownload);
+                                    if (!dsJson.empty()) {
+                                        rapidjson::Document dsd;
+                                        dsd.Parse(dsJson.data());
+                                        if (!dsd.HasParseError() && dsd.IsObject()) {
+                                            if (ed.HasMember("downloadSettings"))
+                                                ed.RemoveMember("downloadSettings");
+                                            ed.AddMember("downloadSettings",
+                                                         rapidjson::Value(dsd, ea), ea);
+                                        }
                                     }
+                                }
+                                std::string extraToExport;
+                                if (!ed.ObjectEmpty()) {
+                                    rapidjson::StringBuffer ebuf;
+                                    rapidjson::Writer<rapidjson::StringBuffer> ew(ebuf);
+                                    ed.Accept(ew);
+                                    extraToExport = ebuf.GetString();
                                 }
                                 if (!extraToExport.empty())
                                     addVlessParam("extra", urlEncode(extraToExport));
