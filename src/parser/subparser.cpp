@@ -345,36 +345,61 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
     return buf.GetString();
 }
 
-// Xray 的 SplitHTTPConfig.Build()：extra 存在时整个反序列化成新配置，只把外层
-// host/path/mode 覆盖回去，其余外层直写字段一律忽略；extra 不存在时才用外层字段。
-// 这里据此产出一份"等价 extra"，供后续统一按 extra 键名映射。
-static std::string buildXhttpEffectiveExtra(const rapidjson::Value &xs, const std::string &extra) {
-    // extra 存在即为全量配置，外层其余字段按 Xray 语义丢弃
-    if (!extra.empty()) {
-        rapidjson::Document ed;
-        ed.Parse(extra.data());
-        if (!ed.HasParseError() && ed.IsObject())
-            return extra;
+// Xray 的 SplitHTTPConfig.Build()：只要 extra 这个键存在（json.RawMessage 非 nil，
+// 含 null）就整体替换——把 extra 反序列化成新配置，再把外层 host/path/mode 覆盖
+// 回去，其余外层字段一律忽略；extra 若非对象非 null 则 unmarshal 失败、拒绝构建。
+// 这里一次性解出有效的 extra 与 downloadSettings，避免多处各自判断而产生优先级偏差。
+struct XhttpEffective {
+    std::string extra;             // 按 Xray 语义解析出的等价 extra
+    std::string downloadSettings;  // 必须与 extra 同源
+    bool valid = true;             // extra 非法时为 false，调用方应拒绝该节点
+};
+
+// 外层直写字段只认 Xray 当前的正式字段名（SplitHTTPConfig 的 json tag），
+// 去掉 host/path/mode/extra/downloadSettings 这几个单独处理的键。
+// 刻意不含 sessionPlacement/sessionKey：那是 mihomo 链接转换器的兼容别名，
+// Xray 自身会忽略，不能借它在 Xray JSON 路径上激活本不生效的配置。
+static const char *XRAY_XHTTP_DIRECT_KEYS[] = {
+    "headers", "xPaddingBytes", "xPaddingObfsMode", "xPaddingKey", "xPaddingHeader",
+    "xPaddingPlacement", "xPaddingMethod", "uplinkHTTPMethod", "sessionIDPlacement",
+    "sessionIDKey", "sessionIDTable", "sessionIDLength", "seqPlacement", "seqKey",
+    "uplinkDataPlacement", "uplinkDataKey", "uplinkChunkSize", "noGRPCHeader",
+    "noSSEHeader", "scMaxEachPostBytes", "scMinPostsIntervalMs", "scMaxBufferedPosts",
+    "scStreamUpServerSecs", "serverMaxHeaderBytes", "xmux"};
+
+static XhttpEffective resolveXhttpSettings(const rapidjson::Value &xs) {
+    XhttpEffective eff;
+    if (!xs.IsObject())
+        return eff;
+
+    if (xs.HasMember("extra")) {
+        const auto &ex = xs["extra"];
+        if (ex.IsObject()) {
+            eff.extra = getCompactJsonString(ex);
+            eff.downloadSettings = getJsonMemberPreserve(ex, "downloadSettings");
+        } else if (!ex.IsNull()) {
+            // 非对象非 null：Xray 会报 Failed to unmarshal "extra"
+            eff.valid = false;
+        }
+        // null 等价于替换成空配置：extra 与 downloadSettings 都留空
+        return eff;
     }
-    // 无 extra：整份 xhttpSettings 即等价 extra，去掉外层单独处理的键
+
     rapidjson::Document merged;
     merged.SetObject();
     auto &alloc = merged.GetAllocator();
-    static const char *outerKeys[] = {"host", "path", "mode", "extra", "downloadSettings"};
-    for (const auto &kv : xs.GetObject()) {
-        bool skip = false;
-        for (const char *k : outerKeys)
-            if (std::string(kv.name.GetString()) == k) { skip = true; break; }
-        if (skip)
-            continue;
-        merged.AddMember(rapidjson::Value(kv.name, alloc), rapidjson::Value(kv.value, alloc), alloc);
+    for (const char *k : XRAY_XHTTP_DIRECT_KEYS) {
+        if (xs.HasMember(k))
+            merged.AddMember(rapidjson::Value(k, alloc), rapidjson::Value(xs[k], alloc), alloc);
     }
-    if (merged.ObjectEmpty())
-        return "";
-    rapidjson::StringBuffer buf;
-    rapidjson::Writer<rapidjson::StringBuffer> w(buf);
-    merged.Accept(w);
-    return buf.GetString();
+    if (!merged.ObjectEmpty()) {
+        rapidjson::StringBuffer buf;
+        rapidjson::Writer<rapidjson::StringBuffer> w(buf);
+        merged.Accept(w);
+        eff.extra = buf.GetString();
+    }
+    eff.downloadSettings = getJsonMemberPreserve(xs, "downloadSettings");
+    return eff;
 }
 
 static void assignXhttpFields(Proxy &node, const std::string &mode, const std::string &extra,
@@ -1017,12 +1042,16 @@ void explodeVmessConf(std::string content, std::vector<Proxy> &nodes) {
                         host = settings ? GetMember(*settings, "host") : "";
                         path = settings ? GetMember(*settings, "path") : "";
                         xhttp_mode = settings ? GetMember(*settings, "mode") : "";
-                        xhttp_extra = settings ? getJsonMemberPreserve(*settings, "extra") : "";
-                        // Xray 允许参数直接写在 xhttpSettings 下而不套 extra，
-                        // 合成为等价 extra 交给同一套映射处理（extra 中的同名键优先）
-                        if (settings)
-                            xhttp_extra = buildXhttpEffectiveExtra(*settings, xhttp_extra);
-                        xhttp_download_settings = settings ? getJsonMemberPreserve(*settings, "downloadSettings") : "";
+                        if (settings) {
+                            const XhttpEffective eff = resolveXhttpSettings(*settings);
+                            if (!eff.valid) {
+                                writeLog(0, "Skipping node: invalid xhttpSettings.extra "
+                                            "(must be an object or null)", LOG_LEVEL_WARNING);
+                                return;
+                            }
+                            xhttp_extra = eff.extra;
+                            xhttp_download_settings = eff.downloadSettings;
+                        }
                     }
                 }
                 if (protocol == "vless") {

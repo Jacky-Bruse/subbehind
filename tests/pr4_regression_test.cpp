@@ -2173,8 +2173,9 @@ void test_xray_xhttp_extra_replaces_outer_fields() {
             "outer host/path/mode must survive");
 }
 
-// 无 extra 时，直写字段全部生效，包括 headers 与 session 旧别名
-void test_xray_xhttp_direct_headers_and_legacy_aliases() {
+// 无 extra 时，直写的 Xray 正式字段全部生效（旧别名的边界见
+// test_xray_xhttp_direct_fields_follow_official_names）
+void test_xray_xhttp_direct_official_fields() {
     const std::string content = R"({
   "outbounds": [
     {
@@ -2187,8 +2188,8 @@ void test_xray_xhttp_direct_headers_and_legacy_aliases() {
         "xhttpSettings": {
           "path": "/up",
           "headers": {"X-Forwarded-For": "1.2.3.4"},
-          "sessionPlacement": "query",
-          "sessionKey": "sk",
+          "sessionIDPlacement": "query",
+          "sessionIDKey": "sk",
           "xPaddingBytes": "100-500"
         }
       }
@@ -2199,9 +2200,9 @@ void test_xray_xhttp_direct_headers_and_legacy_aliases() {
     require(node.XhttpHeaders.find("X-Forwarded-For") != std::string::npos,
             "direct headers must reach XhttpHeaders, got: " + node.XhttpHeaders);
     require(node.XhttpClashOpts.find("\"session-placement\":\"query\"") != std::string::npos,
-            "direct legacy sessionPlacement must map, got: " + node.XhttpClashOpts);
+            "direct sessionIDPlacement must map, got: " + node.XhttpClashOpts);
     require(node.XhttpClashOpts.find("\"session-key\":\"sk\"") != std::string::npos,
-            "direct legacy sessionKey must map, got: " + node.XhttpClashOpts);
+            "direct sessionIDKey must map, got: " + node.XhttpClashOpts);
     require(node.XhttpPaddingBytes == "100-500", "direct xPaddingBytes must still work");
 }
 
@@ -2432,6 +2433,152 @@ void test_download_settings_reality_opts_three_states() {
     require(!d.HasParseError() && d.HasMember("downloadSettings"), "expected downloadSettings");
     require(std::string(d["downloadSettings"]["security"].GetString()) != "reality",
             "cleared reality must not inherit the parent's, got: " + extraJson);
+}
+
+// Xray 的 c.Extra 是 json.RawMessage：只要键存在（含 null）就进入整体替换，
+// 得到的空配置再被外层 host/path/mode 覆盖回来；只有非对象非 null 才是
+// unmarshal 失败。故判定必须用"成员是否存在"，不能用"内容是否非空"。
+void test_xray_xhttp_extra_null_and_empty_still_replace() {
+    auto build = [](const char *extraLiteral) {
+        return std::string(R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "host": "outer.example.com",
+          "mode": "packet-up",
+          "xPaddingBytes": "999-999",
+          "extra": )") + extraLiteral + R"(
+        }
+      }
+    }
+  ]
+})";
+    };
+
+    for (const char *lit : {"null", "{}"}) {
+        const Proxy node = parse_v2ray_conf(build(lit));
+        // 整体替换成空配置：外层直写字段一律失效
+        require(node.XhttpPaddingBytes.empty(),
+                std::string("extra: ") + lit +
+                    " must replace wholesale, outer xPaddingBytes should vanish, got: " +
+                    node.XhttpPaddingBytes);
+        // host/path/mode 仍由外层覆盖回来
+        require(node.Host == "outer.example.com" && node.Path == "/up" &&
+                    node.XhttpMode == "packet-up",
+                std::string("extra: ") + lit + " must keep outer host/path/mode");
+    }
+}
+
+// extra 为非对象非 null 时 Xray 的 json.Unmarshal 会失败并拒绝构建，
+// 转换器不能静默退回外层字段当作没有 extra
+void test_xray_xhttp_invalid_extra_rejects_node() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {"path": "/up", "xPaddingBytes": "999-999", "extra": 123}
+      }
+    }
+  ]
+})";
+    std::vector<Proxy> nodes;
+    explodeConfContent(content, nodes);
+    require(nodes.empty(),
+            "node with an invalid extra must be rejected rather than silently falling back");
+}
+
+// downloadSettings 必须与 extra 同源：extra 存在时只认 extra.downloadSettings，
+// 外层的那份要被忽略；extra 不存在时才用外层
+void test_xray_xhttp_download_settings_follows_extra() {
+    const std::string withExtra = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {"address": "outer-dl.example.com", "port": 1111},
+          "extra": {"downloadSettings": {"address": "inner-dl.example.com", "port": 2222}}
+        }
+      }
+    }
+  ]
+})";
+    const Proxy withE = parse_v2ray_conf(withExtra);
+    require(withE.XhttpDownloadSettings.find("inner-dl.example.com") != std::string::npos,
+            "extra.downloadSettings must win, got: " + withE.XhttpDownloadSettings);
+    require(withE.XhttpDownloadSettings.find("outer-dl.example.com") == std::string::npos,
+            "outer downloadSettings must be ignored when extra exists, got: " +
+                withE.XhttpDownloadSettings);
+
+    const std::string noExtra = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {"address": "outer-dl.example.com", "port": 1111}
+        }
+      }
+    }
+  ]
+})";
+    const Proxy noE = parse_v2ray_conf(noExtra);
+    require(noE.XhttpDownloadSettings.find("outer-dl.example.com") != std::string::npos,
+            "outer downloadSettings must be used when extra is absent, got: " +
+                noE.XhttpDownloadSettings);
+}
+
+// 白名单按 Xray 当前正式字段过滤：headers 是正式字段应生效，
+// 而 sessionPlacement 只是 mihomo 的链接兼容别名，Xray 自己会忽略它，
+// 转换器不能借旧别名把它在 Xray JSON 路径上激活
+void test_xray_xhttp_direct_fields_follow_official_names() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "headers": {"X-Forwarded-For": "1.2.3.4"},
+          "sessionPlacement": "header"
+        }
+      }
+    }
+  ]
+})";
+    const Proxy node = parse_v2ray_conf(content);
+    require(node.XhttpHeaders.find("X-Forwarded-For") != std::string::npos,
+            "headers is an official Xray field and must be honoured, got: " + node.XhttpHeaders);
+    // 只给旧别名、不给正式名：Xray 自身会忽略它，转换器也不该在此路径激活
+    require(node.XhttpClashOpts.find("session-placement") == std::string::npos,
+            "legacy sessionPlacement must not be activated on the Xray JSON path, got: " +
+                node.XhttpClashOpts);
 }
 
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
@@ -3184,8 +3331,12 @@ int main() {
         test_download_settings_reality_opts_three_states();
         test_clash_download_settings_to_link_is_complete_stream_config();
         test_xray_download_settings_passthrough_untouched();
+        test_xray_xhttp_extra_null_and_empty_still_replace();
+        test_xray_xhttp_invalid_extra_rejects_node();
+        test_xray_xhttp_download_settings_follows_extra();
+        test_xray_xhttp_direct_fields_follow_official_names();
         test_xray_xhttp_extra_replaces_outer_fields();
-        test_xray_xhttp_direct_headers_and_legacy_aliases();
+        test_xray_xhttp_direct_official_fields();
         test_xray_download_settings_missing_security_means_no_tls();
         test_xray_download_settings_explicit_values_preserved();
         test_clash_download_settings_explicit_empty_preserved();
