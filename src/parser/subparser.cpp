@@ -115,7 +115,9 @@ static void copyXrayScalar(const rapidjson::Value &src, const char *srcKey, cons
 }
 
 // Convert Xray downloadSettings JSON to Mihomo canonical JSON (Mihomo field names)
-static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
+static std::string xrayDownloadToMihomoJson(const std::string &xray_json, bool *ok = nullptr) {
+    if (ok)
+        *ok = true;
     if (xray_json.empty())
         return "";
     rapidjson::Document d;
@@ -141,7 +143,17 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json) {
     // Xray 的 security 缺失或为空串都明确表示无 TLS（StreamConfig.Build 的
     // `case "", "none"` 同一分支），不存在"未指定"。故无条件写出显式布尔，
     // 否则 mihomo 侧会把缺失当成"继承上游 TLS"。
-    std::string security = GetMember(d, "security");
+    // Xray 的 StreamConfig.Build 用 strings.ToLower 判定，且未知值报
+    // Unknown security；此处同样不区分大小写，未知值由调用方拒绝该节点。
+    const std::string security = toLower(GetMember(d, "security"));
+    if (!security.empty() && security != "none" && security != "tls" &&
+        security != "reality" && security != "xtls") {
+        // Xray 的 StreamConfig.Build 对未知 security 报 Unknown security 并拒绝
+        // 构建，不能静默降级成明文
+        if (ok)
+            *ok = false;
+        return "";
+    }
     out.AddMember("tls", security == "tls" || security == "reality", alloc);
 
     const char *tlsKey = (security == "reality") ? "realitySettings" : "tlsSettings";
@@ -240,11 +252,10 @@ static void addMihomoTlsOpts(const Node &node, rapidjson::Document &out,
         out.AddMember("name-cert-verify", rapidjson::Value(ncv.c_str(), alloc), alloc);
     }
     for (const char *k : MIHOMO_TLS_OPT_KEYS) {
-        if (node[k].IsDefined() && node[k].IsMap()) {
-            rapidjson::Value sub = yamlFlatMapToJson(node[k], alloc);
-            if (!sub.ObjectEmpty())
-                out.AddMember(rapidjson::Value(k, alloc), sub, alloc);
-        }
+        // 这些在 download-settings 里是指针字段，空对象表示"清除继承"，
+        // 因此存在即写出，不能因内容为空而退化成缺失
+        if (node[k].IsDefined() && !node[k].IsNull() && node[k].IsMap())
+            out.AddMember(rapidjson::Value(k, alloc), yamlFlatMapToJson(node[k], alloc), alloc);
     }
 }
 
@@ -290,11 +301,9 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
     };
 
     copyString("server");
-    if (present("port")) {
-        int port = safe_as<int>(node["port"]);
-        if (port > 0)
-            out.AddMember("port", port, alloc);
-    }
+    // 键存在即为显式覆盖，port: 0 也是显式值
+    if (present("port"))
+        out.AddMember("port", safe_as<int>(node["port"]), alloc);
     copyBool("tls");
     copyString("servername");
 
@@ -319,7 +328,7 @@ static std::string clashDownloadToMihomoJson(const Node &node) {
                 ro.AddMember(rapidjson::Value(k, alloc), rapidjson::Value(v.c_str(), alloc), alloc);
             }
         }
-        if (src["support-x25519mlkem768"].IsDefined())
+        if (src["support-x25519mlkem768"].IsDefined() && !src["support-x25519mlkem768"].IsNull())
             ro.AddMember("support-x25519mlkem768",
                          rapidjson::Value(safe_as<std::string>(src["support-x25519mlkem768"]) == "true"), alloc);
         out.AddMember("reality-opts", ro, alloc);
@@ -383,8 +392,11 @@ static const char *XRAY_XHTTP_DIRECT_KEYS[] = {
 
 static XhttpEffective resolveXhttpSettings(const rapidjson::Value &xs) {
     XhttpEffective eff;
-    if (!xs.IsObject())
+    if (!xs.IsObject()) {
+        // Xray 对非对象的 xhttpSettings 同样反序列化失败
+        eff.valid = false;
         return eff;
+    }
 
     if (xs.HasMember("extra")) {
         const auto &ex = xs["extra"];
@@ -416,7 +428,7 @@ static XhttpEffective resolveXhttpSettings(const rapidjson::Value &xs) {
     return eff;
 }
 
-static void assignXhttpFields(Proxy &node, const std::string &mode, const std::string &extra,
+static bool assignXhttpFields(Proxy &node, const std::string &mode, const std::string &extra,
                               const std::string &download_settings) {
     node.XhttpMode = mode;
     node.XhttpExtra = extra;
@@ -487,8 +499,13 @@ static void assignXhttpFields(Proxy &node, const std::string &mode, const std::s
         }
     }
     node.XhttpDownloadSettings = download_settings;
-    if (!download_settings.empty())
-        node.XhttpDownload = xrayDownloadToMihomoJson(download_settings);
+    if (!download_settings.empty()) {
+        bool dsOk = true;
+        node.XhttpDownload = xrayDownloadToMihomoJson(download_settings, &dsOk);
+        if (!dsOk)
+            return false;
+    }
+    return true;
 }
 
 void extractRemark(std::string &link, std::string &remark) {
@@ -1072,8 +1089,11 @@ void explodeVmessConf(std::string content, std::vector<Proxy> &nodes) {
                     vlessConstruct(node, XRAY_DEFAULT_GROUP, add + ":" + port, add, port, "", id, aid, net, "auto",
                                    flow, "", path, host, edge, tls, pbk, sid, fp, sni, alpnList, "",
                                    udp, tfo, scv, tribool(), "", tribool(), encryption);
-                    if (net == "xhttp")
-                        assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings);
+                    if (net == "xhttp" &&
+                        !assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings)) {
+                        writeLog(0, "Skipping node: invalid downloadSettings", LOG_LEVEL_WARNING);
+                        return;
+                    }
                 } else {
                     vmessConstruct(node, V2RAY_DEFAULT_GROUP, add + ":" + port, add, port, type, id, aid, net, cipher,
                                    path, host, edge, tls, "", std::vector<std::string>{}, udp, tfo, scv);
@@ -2339,7 +2359,8 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                         }
                     }
                     if (net == "xhttp") {
-                        assignXhttpFields(node, xhttp_mode, "", "");
+                        // 此处 extra 与 downloadSettings 均为空，不会失败
+                        (void) assignXhttpFields(node, xhttp_mode, "", "");
                         node.XhttpHeaders = xhttp_headers_json;
                         if (!xhttp_no_grpc_header.is_undef())
                             node.XhttpNoGrpcHeader = xhttp_no_grpc_header;
@@ -2821,7 +2842,10 @@ void explodeStdVless(std::string vless, Proxy &node) {
                    tls, pbk, sid, fp, sni, alpnList, packet_encoding, tribool(), tribool(), tribool(),
                    tribool(), "", tribool(), encryption);
     if (net == "xhttp") {
-        assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings);
+        if (!assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings)) {
+            writeLog(0, "Skipping link: invalid downloadSettings", LOG_LEVEL_WARNING);
+            return;
+        }
         if (node.XhttpPaddingBytes.empty())
             node.XhttpPaddingBytes = xhttp_padding_bytes;
     }
@@ -4090,7 +4114,12 @@ void explodeSingbox(rapidjson::Value &outbounds, std::vector<Proxy> &nodes) {
                                        host, "", tls, pbk, sid, fp, sni, alpnList, packet_encoding, udp, tribool(),
                                        tribool(), tribool(), underlying_proxy, tribool(), encryption);
                         if (net == "xhttp")
-                            assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings);
+                            if (!assignXhttpFields(node, xhttp_mode, xhttp_extra,
+                                                   xhttp_download_settings)) {
+                                writeLog(0, "Skipping sing-box node: invalid downloadSettings",
+                                         LOG_LEVEL_WARNING);
+                                continue;
+                            }
                         break;
                     case "http"_hash:
                         password = GetMember(singboxNode, "password");

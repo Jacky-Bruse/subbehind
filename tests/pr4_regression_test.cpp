@@ -2710,6 +2710,123 @@ void test_anchoring_skips_values_that_are_already_strings() {
             "values that are already strings must not be anchored at all, got:\n" + exported);
 }
 
+// A1：ech-opts / shadow-tls-opts 等在 download-settings 里是指针字段，
+// 空对象表示"清除继承"，不能因为内容为空而退化成缺失（即继承主连接）
+void test_download_settings_empty_tls_opts_preserved() {
+    const std::string content = R"(proxies:
+  - name: ds-empty-tls
+    type: vless
+    server: main.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    ech-opts:
+      enable: true
+      config: PARENTECH
+    xhttp-opts:
+      path: /up
+      download-settings:
+        ech-opts: {}
+        shadow-tls-opts: {}
+)";
+    const Proxy node = parse_clash(content);
+    require(node.XhttpDownload.find("ech-opts") != std::string::npos,
+            "empty ech-opts must be preserved as an explicit clear, got: " + node.XhttpDownload);
+    require(node.XhttpDownload.find("shadow-tls-opts") != std::string::npos,
+            "empty shadow-tls-opts must be preserved, got: " + node.XhttpDownload);
+
+    std::vector<Proxy> nodes{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    const YAML::Node ds = YAML::Load(exported)["proxies"][0]["xhttp-opts"]["download-settings"];
+    require(ds["ech-opts"].IsDefined(),
+            "empty ech-opts must survive to clash as an explicit clear, got:\n" + exported);
+}
+
+// A4：Xray 对 "xhttpSettings": 123 会反序列化失败，转换器不该静默接受
+void test_xray_non_object_xhttp_settings_rejected() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {"network": "xhttp", "security": "tls", "xhttpSettings": 123}
+    }
+  ]
+})";
+    std::vector<Proxy> nodes;
+    explodeConfContent(content, nodes);
+    require(nodes.empty(), "non-object xhttpSettings must be rejected, not silently accepted");
+}
+
+// S5：Xray 用 strings.ToLower 判定 security，且未知值会报 Unknown security。
+// 大小写变体必须识别；未知值不能被静默降级成明文。
+void test_xray_security_case_insensitive_and_unknown_rejected() {
+    auto build = [](const char *sec) {
+        return std::string(R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {
+            "address": "dl.example.com", "port": 443, "security": ")") + sec + R"(",
+            "xhttpSettings": {"path": "/down"}
+          }
+        }
+      }
+    }
+  ]
+})";
+    };
+
+    const Proxy upper = parse_v2ray_conf(build("TLS"));
+    require(upper.XhttpDownload.find("\"tls\":true") != std::string::npos,
+            "security is matched case-insensitively by Xray, got: " + upper.XhttpDownload);
+
+    std::vector<Proxy> nodes;
+    explodeConfContent(build("bogus"), nodes);
+    require(nodes.empty(),
+            "unknown security must be rejected rather than silently downgraded to plaintext");
+}
+
+// S6：显式 port: 0 与 support-x25519mlkem768: null 的守恒
+void test_download_settings_zero_and_null_conserved() {
+    const std::string content = R"(proxies:
+  - name: ds-zero
+    type: vless
+    server: main.example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: xhttp
+    xhttp-opts:
+      path: /up
+      download-settings:
+        port: 0
+        reality-opts:
+          public-key: pbk
+          support-x25519mlkem768: null
+)";
+    const Proxy node = parse_clash(content);
+    require(node.XhttpDownload.find("\"port\":0") != std::string::npos,
+            "explicit port 0 must be preserved, got: " + node.XhttpDownload);
+    require(node.XhttpDownload.find("support-x25519mlkem768") == std::string::npos,
+            "YAML null must be treated as unset, not as an explicit false, got: " +
+                node.XhttpDownload);
+}
+
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
 // 平铺的 public-key/short-id 会被 mihomo 静默忽略导致下行丢失 reality 配置
 void test_clash_xhttp_download_settings_reality_opts_nested() {
@@ -3458,6 +3575,10 @@ int main() {
         test_xray_xhttp_settings_direct_fields_parsed();
         test_vless_link_extra_legacy_session_aliases();
         test_xray_download_settings_allow_insecure();
+        test_download_settings_empty_tls_opts_preserved();
+        test_xray_non_object_xhttp_settings_rejected();
+        test_xray_security_case_insensitive_and_unknown_rejected();
+        test_download_settings_zero_and_null_conserved();
         test_download_settings_explicit_empty_all_fields_preserved();
         test_download_settings_reality_opts_three_states();
         test_clash_download_settings_to_link_is_complete_stream_config();

@@ -341,9 +341,13 @@ static void addMihomoTlsOptsToYaml(const rapidjson::Value &d, YAML::Node out) {
     if (d.HasMember("name-cert-verify") && d["name-cert-verify"].IsString())
         setYamlString(out["name-cert-verify"], d["name-cert-verify"].GetString());
     for (const char *k : MIHOMO_TLS_OPT_KEYS) {
-        // 注意传 out[k]：未绑定的空 Node 按值传入后赋值不会回传到父树
-        if (d.HasMember(k) && d[k].IsObject() && !d[k].ObjectEmpty())
+        // 注意传 out[k]：未绑定的空 Node 按值传入后赋值不会回传到父树。
+        // 空对象是"清除继承"的显式覆盖，同样要写出。
+        if (d.HasMember(k) && d[k].IsObject()) {
             jsonObjToYamlMap(d[k], out[k]);
+            if (!out[k].IsDefined())
+                out[k] = YAML::Node(YAML::NodeType::Map);
+        }
     }
 }
 
@@ -470,7 +474,9 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
     if (d.HasParseError() || !d.IsObject())
         return;
 
-    YAML::Node ds;
+    // 必须是已定义的 Map：未绑定的 Node 传值给辅助函数后，函数内的赋值不会
+    // 回传到此处（download-settings 只含 TLS 对象时前面的写入都不会执行）
+    YAML::Node ds(YAML::NodeType::Map);
     auto emitString = [&](const char *key) {
         if (d.HasMember(key) && d[key].IsString())
             setYamlString(ds[key], d[key].GetString());
@@ -529,7 +535,7 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
 
     addMihomoTlsOptsToYaml(d, ds);
 
-    if (ds.IsDefined())
+    if (ds.size() > 0)
         opts["download-settings"] = ds;
 }
 
