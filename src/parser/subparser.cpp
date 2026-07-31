@@ -122,8 +122,12 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json, bool *
         return "";
     rapidjson::Document d;
     d.Parse(xray_json.data());
-    if (d.HasParseError() || !d.IsObject())
+    if (d.HasParseError() || !d.IsObject()) {
+        // 坏 JSON 或非对象在 Xray 侧同样构建失败，不能静默当作"没有下行配置"
+        if (ok)
+            *ok = false;
         return "";
+    }
 
     rapidjson::Document out;
     out.SetObject();
@@ -146,8 +150,10 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json, bool *
     // Xray 的 StreamConfig.Build 用 strings.ToLower 判定，且未知值报
     // Unknown security；此处同样不区分大小写，未知值由调用方拒绝该节点。
     const std::string security = toLower(GetMember(d, "security"));
+    // 注意 xtls 不在白名单：Xray 对它是 PrintRemovedFeatureError("Legacy XTLS")
+    // 明确拒绝，而非"视为无 TLS"，降级成明文会带来安全影响
     if (!security.empty() && security != "none" && security != "tls" &&
-        security != "reality" && security != "xtls") {
+        security != "reality") {
         // Xray 的 StreamConfig.Build 对未知 security 报 Unknown security 并拒绝
         // 构建，不能静默降级成明文
         if (ok)
@@ -165,8 +171,12 @@ static std::string xrayDownloadToMihomoJson(const std::string &xray_json, bool *
             out.AddMember("skip-cert-verify", ts["allowInsecure"].GetBool(), alloc);
         if (ts.HasMember("alpn") && ts["alpn"].IsArray()) {
             rapidjson::Value alpnArr(rapidjson::kArrayType);
-            for (const auto &a : ts["alpn"].GetArray())
-                alpnArr.PushBack(rapidjson::Value(a.GetString(), alloc), alloc);
+            // 逐元素校验：GetString() 内部只有 RAPIDJSON_ASSERT，release 构建下
+            // 对非字符串元素是未定义行为，而订阅内容不可信
+            for (const auto &a : ts["alpn"].GetArray()) {
+                if (a.IsString())
+                    alpnArr.PushBack(rapidjson::Value(a, alloc), alloc);
+            }
             out.AddMember("alpn", alpnArr, alloc);
         }
         if (security == "reality") {
@@ -2844,6 +2854,9 @@ void explodeStdVless(std::string vless, Proxy &node) {
     if (net == "xhttp") {
         if (!assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings)) {
             writeLog(0, "Skipping link: invalid downloadSettings", LOG_LEVEL_WARNING);
+            // 必须清掉 Type：vlessConstruct 已把它设为 VLESS，而 explodeSub 仅以
+            // Type == Unknown 判断是否丢弃，否则这里的 return 拦不住外层
+            node.Type = ProxyType::Unknown;
             return;
         }
         if (node.XhttpPaddingBytes.empty())

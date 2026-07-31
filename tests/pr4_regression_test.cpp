@@ -2827,6 +2827,95 @@ void test_download_settings_zero_and_null_conserved() {
                 node.XhttpDownload);
 }
 
+// B：链接路径此前"拒绝"是假的——vlessConstruct 已把 node.Type 设为 VLESS，
+// 函数内 return 拦不住外层，explodeSub 的接受条件只看 Type 是否为 Unknown，
+// 于是日志说跳过、节点照样入列且丢掉了 download-settings。
+void test_vless_link_invalid_download_settings_actually_drops_node() {
+    // downloadSettings 里 security 为未知值，Xray 会拒绝构建
+    const std::string bad = urlEncode(R"({"address":"dl.example.com","port":443,"security":"bogus"})");
+    std::vector<Proxy> nodes;
+    explodeSub("vless://12345678-1234-1234-1234-123456789012@x.example.com:443"
+               "?security=tls&type=xhttp&path=%2Fup&downloadSettings=" + bad + "#bad-ds",
+               nodes);
+    require(nodes.empty(),
+            "a link with invalid downloadSettings must be dropped, not accepted without it");
+}
+
+// 坏 JSON 或非对象的 downloadSettings 在 Xray 侧同样构建失败，
+// 不能静默当作"没有下行配置"而放行节点
+void test_link_malformed_download_settings_drops_node() {
+    for (const char *bad : {"123", "%7Bbroken"}) {
+        std::vector<Proxy> nodes;
+        explodeSub(std::string("vless://12345678-1234-1234-1234-123456789012@x.example.com:443")
+                   + "?security=tls&type=xhttp&path=%2Fup&downloadSettings=" + bad + "#bad",
+                   nodes);
+        require(nodes.empty(),
+                std::string("malformed downloadSettings (") + bad + ") must drop the node");
+    }
+}
+
+// D：ALPN 数组元素未校验类型即 GetString()。rapidjson 内部是
+// RAPIDJSON_ASSERT(IsString())，release 构建下 assert 被禁用，非字符串元素
+// 会导致未定义行为。订阅内容不可信，必须逐元素校验。
+void test_xray_download_settings_alpn_non_string_elements_are_safe() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {
+            "address": "dl.example.com", "port": 443, "security": "tls",
+            "tlsSettings": {"alpn": ["h2", 123, null, "http/1.1"]},
+            "xhttpSettings": {"path": "/down"}
+          }
+        }
+      }
+    }
+  ]
+})";
+    const Proxy node = parse_v2ray_conf(content);
+    // 不崩溃即为通过；同时非字符串元素应被跳过而不是产出垃圾
+    require(node.XhttpDownload.find("h2") != std::string::npos,
+            "string alpn entries must survive, got: " + node.XhttpDownload);
+    require(node.XhttpDownload.find("http/1.1") != std::string::npos,
+            "string alpn entries must survive, got: " + node.XhttpDownload);
+}
+
+// S3：Xray 对 security: xtls 是 PrintRemovedFeatureError("Legacy XTLS") 明确拒绝，
+// 不是"视为无 TLS"。把它降级成明文放行有安全含义。
+void test_xray_download_settings_xtls_is_rejected() {
+    const std::string content = R"({
+  "outbounds": [
+    {
+      "protocol": "vless",
+      "settings": {"vnext": [{"address": "x.example.com", "port": 443,
+        "users": [{"id": "12345678-1234-1234-1234-123456789012"}]}]},
+      "streamSettings": {
+        "network": "xhttp",
+        "security": "tls",
+        "xhttpSettings": {
+          "path": "/up",
+          "downloadSettings": {
+            "address": "dl.example.com", "port": 443, "security": "xtls",
+            "xhttpSettings": {"path": "/down"}
+          }
+        }
+      }
+    }
+  ]
+})";
+    std::vector<Proxy> nodes;
+    explodeConfContent(content, nodes);
+    require(nodes.empty(),
+            "legacy xtls must be rejected like Xray does, not downgraded to plaintext");
+}
+
 // download-settings 的 reality 参数在 mihomo 里是嵌套的 reality-opts，
 // 平铺的 public-key/short-id 会被 mihomo 静默忽略导致下行丢失 reality 配置
 void test_clash_xhttp_download_settings_reality_opts_nested() {
@@ -3576,6 +3665,10 @@ int main() {
         test_vless_link_extra_legacy_session_aliases();
         test_xray_download_settings_allow_insecure();
         test_download_settings_empty_tls_opts_preserved();
+        test_vless_link_invalid_download_settings_actually_drops_node();
+        test_link_malformed_download_settings_drops_node();
+        test_xray_download_settings_alpn_non_string_elements_are_safe();
+        test_xray_download_settings_xtls_is_rejected();
         test_xray_non_object_xhttp_settings_rejected();
         test_xray_security_case_insensitive_and_unknown_rejected();
         test_download_settings_zero_and_null_conserved();
