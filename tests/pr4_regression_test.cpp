@@ -1979,9 +1979,9 @@ void test_clash_xhttp_headers_and_download_exported_to_link() {
     const std::string extraJson = urlDecode(decoded.substr(decoded.find("extra=") + 6));
     require(extraJson.find("X-Forwarded-For") != std::string::npos,
             "xhttp-opts.headers must reach the link extra, got: " + extraJson);
-    // downloadSettings 位于 extra 内（mihomo 的 convert 只读 extra["downloadSettings"]）
-    require(extraJson.find("\"downloadSettings\"") != std::string::npos,
-            "download-settings must reach the link extra, got: " + extraJson);
+    // Clash 侧的 download-settings 不再进链接（无法无损表达），headers 不受影响
+    require(extraJson.find("\"downloadSettings\"") == std::string::npos,
+            "clash-side download-settings must not be synthesised, got: " + extraJson);
 }
 
 // Xray 允许把 xhttp 参数直接写在 xhttpSettings 下而不套 extra，
@@ -2234,20 +2234,19 @@ void test_xray_download_settings_missing_security_means_no_tls() {
             "missing security must become explicit tls:false, got: " + node.XhttpDownload);
 }
 
-// 从 mihomo 生成 Xray downloadSettings 时必须产出完整的独立 StreamConfig：
-// Xray 的 StreamConfig.Build() 默认 ProtocolName="tcp"，只有显式 network 才切换；
-// 且 Xray 不像 mihomo 那样用 lo.FromPtrOr 从父连接继承，缺失字段必须先物化。
-// 位置也必须在 extra 内——mihomo 的 convert 只读 extra["downloadSettings"]。
-void test_clash_download_settings_to_link_is_complete_stream_config() {
+// Clash 侧的 download-settings 不再生成到链接：mihomo 是"复制父 XHTTP 配置再覆盖
+// 四项"，Xray 的 downloadSettings 则零继承独立构建，且 ShadowTLS/Restls/JLS 等在
+// Xray 无等价表达。生成部分正确的下行配置比不生成更危险，故跳过并告警，
+// 但节点本身照常导出——丢的只是一项可选的下行优化。
+void test_clash_download_settings_omitted_from_link_but_node_kept() {
     const std::string content = R"(proxies:
-  - name: ds-complete
+  - name: ds-omitted
     type: vless
     server: main.example.com
     port: 443
     uuid: 12345678-1234-1234-1234-123456789012
     tls: true
     servername: sni.example.com
-    client-fingerprint: chrome
     network: xhttp
     xhttp-opts:
       path: /up
@@ -2257,44 +2256,16 @@ void test_clash_download_settings_to_link_is_complete_stream_config() {
     std::vector<Proxy> nodes;
     explodeSub(content, nodes);
     require(nodes.size() == 1, "expected one node");
+    require(!nodes[0].XhttpDownload.empty(),
+            "download-settings must still be parsed for the clash side");
 
     extra_settings ext;
     constexpr int kVlessMask = 32;
     const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
-    auto pos = decoded.find("extra=");
-    require(pos != std::string::npos, "expected extra= in link");
-    auto end = decoded.find_first_of("&#", pos);
-    if (end == std::string::npos) end = decoded.size();
-    const std::string extraJson = urlDecode(decoded.substr(pos + 6, end - pos - 6));
-
-    // 顶层参数 mihomo 读不到，必须在 extra 内
-    require(decoded.find("&downloadSettings=") == std::string::npos,
-            "downloadSettings must not be a top-level param, got: " + decoded);
-
-    rapidjson::Document d;
-    d.Parse(extraJson.data());
-    require(!d.HasParseError() && d.IsObject(), "extra must be valid JSON: " + extraJson);
-    require(d.HasMember("downloadSettings") && d["downloadSettings"].IsObject(),
-            "extra.downloadSettings must exist, got: " + extraJson);
-    const auto &ds = d["downloadSettings"];
-
-    // 缺 network 会让 Xray 用默认的 tcp，xhttpSettings 形同虚设
-    require(ds.HasMember("network") && std::string(ds["network"].GetString()) == "xhttp",
-            "downloadSettings must declare network=xhttp, got: " + extraJson);
-    // 未在 download-settings 里覆盖的字段，必须物化父连接的值
-    require(ds.HasMember("address") && std::string(ds["address"].GetString()) == "main.example.com",
-            "address must be materialised from the parent, got: " + extraJson);
-    require(ds.HasMember("port") && ds["port"].GetInt() == 443,
-            "port must be materialised from the parent, got: " + extraJson);
-    require(ds.HasMember("security") && std::string(ds["security"].GetString()) == "tls",
-            "parent tls must materialise into security=tls, not none, got: " + extraJson);
-    require(ds.HasMember("tlsSettings") &&
-                std::string(ds["tlsSettings"]["serverName"].GetString()) == "sni.example.com",
-            "parent servername must be materialised, got: " + extraJson);
-    // download-settings 自身的覆盖值仍要生效
-    require(ds.HasMember("xhttpSettings") &&
-                std::string(ds["xhttpSettings"]["path"].GetString()) == "/down",
-            "download-settings.path must override, got: " + extraJson);
+    require(decoded.find("vless://") != std::string::npos,
+            "the node itself must still be exported");
+    require(decoded.find("downloadSettings") == std::string::npos,
+            "clash-side download-settings must not be synthesised into the link, got: " + decoded);
 }
 
 // 原始 Xray downloadSettings 是原样透传，不得擅自补 network，
@@ -2419,20 +2390,8 @@ void test_download_settings_reality_opts_three_states() {
     require(override.XhttpDownload.find("dl-pbk") != std::string::npos,
             "reality-opts override must be preserved, got: " + override.XhttpDownload);
 
-    // 清除语义要贯通到 Xray 侧：不得再继承主连接的 reality
-    std::vector<Proxy> nodes{cleared};
-    extra_settings ext;
-    constexpr int kVlessMask = 32;
-    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
-    auto pos = decoded.find("extra=");
-    auto end = decoded.find_first_of("&#", pos);
-    if (end == std::string::npos) end = decoded.size();
-    const std::string extraJson = urlDecode(decoded.substr(pos + 6, end - pos - 6));
-    rapidjson::Document d;
-    d.Parse(extraJson.data());
-    require(!d.HasParseError() && d.HasMember("downloadSettings"), "expected downloadSettings");
-    require(std::string(d["downloadSettings"]["security"].GetString()) != "reality",
-            "cleared reality must not inherit the parent's, got: " + extraJson);
+    // 物化已撤除，此处只验证 canonical 三态；清除语义对 clash 侧的效果
+    // 由 test_clash_download_settings_x25519mlkem768 等用例覆盖
 }
 
 // Xray 的 c.Extra 是 json.RawMessage：只要键存在（含 null）就进入整体替换，
@@ -3896,7 +3855,7 @@ int main() {
         test_download_settings_zero_and_null_conserved();
         test_download_settings_explicit_empty_all_fields_preserved();
         test_download_settings_reality_opts_three_states();
-        test_clash_download_settings_to_link_is_complete_stream_config();
+        test_clash_download_settings_omitted_from_link_but_node_kept();
         test_xray_download_settings_passthrough_untouched();
         test_xray_xhttp_extra_null_and_empty_still_replace();
         test_xray_xhttp_invalid_extra_rejects_node();

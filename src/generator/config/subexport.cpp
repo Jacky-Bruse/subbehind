@@ -351,118 +351,6 @@ static void addMihomoTlsOptsToYaml(const rapidjson::Value &d, YAML::Node out) {
     }
 }
 
-// Mihomo canonical download JSON → Xray downloadSettings（放进链接的 extra 内）。
-// 两边的继承模型不同，不能逐字段照搬：mihomo 用 lo.FromPtrOr(子, 父) 逐项回退到
-// 主连接（adapter/outbound/vless.go），而 Xray 的 c.DownloadSettings.Build() 是独立
-// 构建、零继承。故此处必须先用父节点物化出完整配置，再套用 download-settings 的覆盖。
-// 另：Xray 的 StreamConfig.Build() 默认 ProtocolName="tcp"，只有显式 network 才切换，
-// 所以生成的配置必须自带 network=xhttp，否则下行会退回 TCP。
-static std::string mihomoDownloadToXrayJson(const Proxy &x, const std::string &download_json) {
-    if (download_json.empty())
-        return "";
-    rapidjson::Document d;
-    d.Parse(download_json.data());
-    if (d.HasParseError() || !d.IsObject())
-        return "";
-
-    rapidjson::Document out;
-    out.SetObject();
-    auto &alloc = out.GetAllocator();
-
-    // 成员存在即为显式覆盖，缺失则物化父连接的值
-    auto pick = [&d](const char *key, const std::string &parent) {
-        return (d.HasMember(key) && d[key].IsString()) ? std::string(d[key].GetString()) : parent;
-    };
-
-    const std::string address = pick("server", x.Hostname);
-    if (!address.empty())
-        out.AddMember("address", rapidjson::Value(address.c_str(), alloc), alloc);
-    const int port = (d.HasMember("port") && d["port"].IsInt()) ? d["port"].GetInt() : x.Port;
-    if (port > 0)
-        out.AddMember("port", port, alloc);
-    out.AddMember("network", rapidjson::Value("xhttp", alloc), alloc);
-
-    // reality-opts 对象存在即为显式覆盖（空对象表示清除继承的 reality）
-    const bool dsHasReality = d.HasMember("reality-opts") && d["reality-opts"].IsObject();
-    std::string pbk, sid;
-    if (dsHasReality) {
-        pbk = GetMember(d["reality-opts"], "public-key");
-        sid = GetMember(d["reality-opts"], "short-id");
-    } else {
-        pbk = x.PublicKey;
-        sid = x.ShortId;
-    }
-    const bool tlsOn = (d.HasMember("tls") && d["tls"].IsBool()) ? d["tls"].GetBool() : x.TLSSecure;
-    const bool realityOn = !pbk.empty();
-    out.AddMember("security",
-                  rapidjson::Value(realityOn ? "reality" : (tlsOn ? "tls" : "none"), alloc), alloc);
-
-    if (realityOn || tlsOn) {
-        rapidjson::Value ts(rapidjson::kObjectType);
-        const std::string sn = pick("servername", x.ServerName);
-        if (!sn.empty())
-            ts.AddMember("serverName", rapidjson::Value(sn.c_str(), alloc), alloc);
-        const std::string cfp = pick("client-fingerprint", x.ClientFingerprint);
-        if (!cfp.empty())
-            ts.AddMember("fingerprint", rapidjson::Value(cfp.c_str(), alloc), alloc);
-        const bool scv = (d.HasMember("skip-cert-verify") && d["skip-cert-verify"].IsBool())
-                             ? d["skip-cert-verify"].GetBool()
-                             : x.AllowInsecure.get();
-        if (scv)
-            ts.AddMember("allowInsecure", true, alloc);
-        if (d.HasMember("alpn") && d["alpn"].IsArray() && !d["alpn"].Empty())
-            ts.AddMember("alpn", rapidjson::Value(d["alpn"], alloc), alloc);
-        else if (!x.AlpnList.empty()) {
-            rapidjson::Value alpnArr(rapidjson::kArrayType);
-            for (const auto &a : x.AlpnList)
-                alpnArr.PushBack(rapidjson::Value(a.c_str(), alloc), alloc);
-            ts.AddMember("alpn", alpnArr, alloc);
-        }
-        if (realityOn) {
-            ts.AddMember("publicKey", rapidjson::Value(pbk.c_str(), alloc), alloc);
-            if (!sid.empty())
-                ts.AddMember("shortId", rapidjson::Value(sid.c_str(), alloc), alloc);
-        }
-        if (!ts.ObjectEmpty())
-            out.AddMember(rapidjson::Value(realityOn ? "realitySettings" : "tlsSettings", alloc),
-                          ts, alloc);
-    }
-
-    rapidjson::Value xs(rapidjson::kObjectType);
-    if (d.HasMember("path") && d["path"].IsString())
-        xs.AddMember("path", rapidjson::Value(d["path"], alloc), alloc);
-    if (d.HasMember("host") && d["host"].IsString())
-        xs.AddMember("host", rapidjson::Value(d["host"], alloc), alloc);
-    if (d.HasMember("headers") && d["headers"].IsObject())
-        xs.AddMember("headers", rapidjson::Value(d["headers"], alloc), alloc);
-    if (d.HasMember("reuse-settings") && d["reuse-settings"].IsObject()) {
-        const auto &rs = d["reuse-settings"];
-        rapidjson::Value xmux(rapidjson::kObjectType);
-        static const struct { const char *mihomo; const char *xray; } reuseMap[] = {
-            {"max-connections", "maxConnections"}, {"max-concurrency", "maxConcurrency"},
-            {"c-max-reuse-times", "cMaxReuseTimes"}, {"h-max-request-times", "hMaxRequestTimes"},
-            {"h-max-reusable-secs", "hMaxReusableSecs"},
-        };
-        for (const auto &f : reuseMap) {
-            if (rs.HasMember(f.mihomo) && rs[f.mihomo].IsString() && rs[f.mihomo].GetStringLength() > 0)
-                xmux.AddMember(rapidjson::Value(f.xray, alloc),
-                               rapidjson::Value(rs[f.mihomo].GetString(), alloc), alloc);
-        }
-        // hKeepAlivePeriod 在 Xray 是裸 int64，无字符串反序列化
-        if (rs.HasMember("h-keep-alive-period") && rs["h-keep-alive-period"].IsString())
-            xmux.AddMember("hKeepAlivePeriod", atoi(rs["h-keep-alive-period"].GetString()), alloc);
-        if (!xmux.ObjectEmpty())
-            xs.AddMember("xmux", xmux, alloc);
-    }
-    if (!xs.ObjectEmpty())
-        out.AddMember("xhttpSettings", xs, alloc);
-
-    rapidjson::StringBuffer buf;
-    rapidjson::Writer<rapidjson::StringBuffer> writer(buf);
-    out.Accept(writer);
-    return buf.GetString();
-}
-
 // Export Mihomo canonical download JSON to xhttp-opts.download-settings YAML node.
 // canonical 里成员存在即为显式覆盖（含空串、空对象），必须原样写出；
 // 成员缺失才表示沿用主连接，此时不写该键。
@@ -2031,9 +1919,18 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                                     // 原始 Xray 输入原样透传，不补 network，以免改变其
                                     // 默认网络行为；从 mihomo canonical 生成的才需要完整
                                     // StreamConfig。用替换而非追加，避免同名键重复。
-                                    std::string dsJson = x.XhttpDownloadSettings;
-                                    if (dsJson.empty())
-                                        dsJson = mihomoDownloadToXrayJson(x, x.XhttpDownload);
+                                    // 仅原样透传 Xray 输入的 downloadSettings。
+                                    // Clash 侧的 download-settings 无法无损转成独立的
+                                    // Xray StreamConfig：mihomo 是"复制父 XHTTP 配置再
+                                    // 覆盖四项"，Xray 的 downloadSettings 则零继承独立
+                                    // 构建，且 ShadowTLS/Restls/JLS 等在 Xray 无等价表达。
+                                    // 生成部分正确的下行配置比不生成更危险，故跳过并告警。
+                                    const std::string &dsJson = x.XhttpDownloadSettings;
+                                    if (dsJson.empty() && !x.XhttpDownload.empty())
+                                        writeLog(0, "Node '" + x.Remark + "': xhttp download-settings "
+                                                    "omitted from link export (no lossless Xray "
+                                                    "representation); the node itself is unaffected",
+                                                 LOG_LEVEL_WARNING);
                                     if (!dsJson.empty()) {
                                         rapidjson::Document dsd;
                                         dsd.Parse(dsJson.data());
