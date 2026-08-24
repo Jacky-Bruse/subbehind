@@ -1874,6 +1874,25 @@ void test_hysteria_cert_fingerprint_roundtrip() {
             "hysteria2 Surge export must keep the cert fingerprint, got:\n" + surge);
 }
 
+void test_hysteria2_link_pin_sha256_roundtrip() {
+    const std::string pin =
+        "BA:88:45:17:A1:01:02:03:04:05:06:07:08:09:0A:0B:0C:0D:0E:0F:10:11:12:13:14:15:16:17:18:19:1A:1B";
+    const Proxy node = parse_link(
+        "hysteria2://secret@h.example.com:443?pinSHA256=" + urlEncode(pin) +
+        "&sni=h.example.com#hy2-pin");
+    require(node.CertFingerprint == pin,
+            "hysteria2 pinSHA256 must be parsed as a cert fingerprint");
+
+    std::vector<Proxy> nodes{node};
+    extra_settings ext;
+    constexpr int kHysteria2Mask = 16;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kHysteria2Mask, ext));
+    require(decoded.find("pinSHA256=" + urlEncode(pin)) != std::string::npos,
+            "hysteria2 link export must keep pinSHA256, got:\n" + decoded);
+    require(parse_link(decoded).CertFingerprint == pin,
+            "hysteria2 pinSHA256 must survive a link round-trip");
+}
+
 // type 缺省或未知都不该丢弃整个节点：mihomo 的 convert/v.go 明确
 // `if network == "" { network = "tcp" }`，其运行时对未知 network 也是
 // `default: // default tcp network`。丢节点会让用户静默少节点且无从排查。
@@ -3831,6 +3850,7 @@ int main() {
         test_anytls_link_fp_and_hpkp_separated();
         test_vless_trojan_link_fp_uses_client_fingerprint();
         test_hysteria_cert_fingerprint_roundtrip();
+        test_hysteria2_link_pin_sha256_roundtrip();
         test_vless_link_missing_or_unknown_type_falls_back_to_tcp();
         test_clash_unknown_network_falls_back_instead_of_dropping();
         test_singbox_packet_encoding_not_duplicated();

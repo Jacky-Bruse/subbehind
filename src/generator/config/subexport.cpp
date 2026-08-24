@@ -1759,6 +1759,9 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                 if (!sni.empty()) {
                     proxyStr += "&sni=" + sni;
                 }
+                if (!x.CertFingerprint.empty()) {
+                    proxyStr += "&pinSHA256=" + urlEncode(x.CertFingerprint);
+                }
                 proxyStr += "#" + urlEncode(remark);
                 break;
             case ProxyType::VLESS: {

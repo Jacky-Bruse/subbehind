@@ -2805,6 +2805,7 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
 
     hysteria2Construct(node, HYSTERIA2_DEFAULT_GROUP, remarks, add, port, password, host, up, down, alpn, obfsParam,
                        obfsPassword, host, "", ports, tribool(), tribool(), scv);
+    node.CertFingerprint = urlDecode(getUrlArg(addition, "pinSHA256"));
     return;
 }
 
