@@ -3806,7 +3806,7 @@ void test_singbox_vless_xhttp_reality_preserves_both() {
             "tls.utls.fingerprint must reach the node, not be replaced by the \"chrome\" default");
 }
 
-std::string render_all_base_clash(const string_map &globals) {
+std::string render_all_base_clash(const string_map &globals, const string_map &request = {}) {
     std::ifstream file(std::string(TEST_SOURCE_DIR) + "/base/base/all_base.tpl", std::ios::binary);
     require(file.is_open(), "cannot open base/base/all_base.tpl");
     std::ostringstream buffer;
@@ -3814,6 +3814,7 @@ std::string render_all_base_clash(const string_map &globals) {
 
     template_args args;
     args.global_vars = globals;
+    args.request_params = request;
     args.request_params["target"] = "clash";
     args.local_vars["clash.new_field_name"] = "true";
 
@@ -3827,6 +3828,32 @@ void test_all_base_clash_node_domain_omitted_when_empty() {
     // 留空时整条不输出，而不是输出一个只剩前缀的 "+."
     require(out.find("\"+.\"") == std::string::npos,
             "empty node_domain must not emit a fake-ip-filter entry");
+}
+
+void test_all_base_clash_dns_compat() {
+    for (const std::string &domain : {std::string(), std::string("example.com")}) {
+        const string_map globals{{"clash.node_domain", domain}};
+        const YAML::Node normal = YAML::Load(render_all_base_clash(globals));
+        for (const char *value : {"", "false", "TRUE", "1", "invalid"}) {
+            require(YAML::Dump(YAML::Load(render_all_base_clash(globals, {{"dns_compat", value}}))) ==
+                        YAML::Dump(normal),
+                    "only dns_compat=true may change the default configuration");
+        }
+        YAML::Node expected = YAML::Clone(normal);
+        YAML::Node filters(YAML::NodeType::Sequence);
+        bool removed = false;
+        for (const auto &item : normal["dns"]["fake-ip-filter"]) {
+            if (item.as<std::string>() == "geosite:fake-ip-filter")
+                removed = true;
+            else
+                filters.push_back(item.as<std::string>());
+        }
+        require(removed, "normal DNS must retain geosite:fake-ip-filter");
+        expected["dns"]["fake-ip-filter"] = filters;
+        const YAML::Node compat = YAML::Load(render_all_base_clash(globals, {{"dns_compat", "true"}}));
+        require(YAML::Dump(compat) == YAML::Dump(expected),
+                "DNS compatibility must only remove geosite:fake-ip-filter, preserving node_domain and other settings");
+    }
 }
 
 void test_all_base_clash_node_domain_emitted_when_set() {
@@ -3976,6 +4003,7 @@ int main() {
         test_vless_link_xhttp_empty_host_falls_back_to_sni();
         test_singbox_vless_xhttp_reality_preserves_both();
         test_all_base_clash_node_domain_omitted_when_empty();
+        test_all_base_clash_dns_compat();
         test_all_base_clash_node_domain_emitted_when_set();
         test_all_base_clash_secret_with_quote_keeps_yaml_valid();
         test_all_base_clash_template_values_cannot_inject_yaml();
