@@ -97,8 +97,10 @@ dns:
     "geosite:cn,private": # 包含 cn 和 私有域名
       - https://dns.alidns.com/dns-query
       - https://doh.pub/dns-query
+{% if default(request.dns_compat, "false") != "true" %}
     "geosite:category-ads-all": # 广告域名
       - "rcode://name_error"
+{% endif %}
     "geosite:category-ai-!cn":
       - https://cloudflare-dns.com/dns-query
       - https://dns.google/dns-query

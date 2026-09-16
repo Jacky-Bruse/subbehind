@@ -3834,6 +3834,9 @@ void test_all_base_clash_dns_compat() {
     for (const std::string &domain : {std::string(), std::string("example.com")}) {
         const string_map globals{{"clash.node_domain", domain}};
         const YAML::Node normal = YAML::Load(render_all_base_clash(globals));
+        const YAML::Node ads = normal["dns"]["nameserver-policy"]["geosite:category-ads-all"];
+        require(ads.IsSequence() && ads.size() == 1 && ads[0].as<std::string>() == "rcode://name_error",
+                "normal DNS must retain the NXDOMAIN advertising policy");
         for (const char *value : {"", "false", "TRUE", "1", "invalid"}) {
             require(YAML::Dump(YAML::Load(render_all_base_clash(globals, {{"dns_compat", value}}))) ==
                         YAML::Dump(normal),
@@ -3850,9 +3853,10 @@ void test_all_base_clash_dns_compat() {
         }
         require(removed, "normal DNS must retain geosite:fake-ip-filter");
         expected["dns"]["fake-ip-filter"] = filters;
+        expected["dns"]["nameserver-policy"].remove("geosite:category-ads-all");
         const YAML::Node compat = YAML::Load(render_all_base_clash(globals, {{"dns_compat", "true"}}));
         require(YAML::Dump(compat) == YAML::Dump(expected),
-                "DNS compatibility must only remove geosite:fake-ip-filter, preserving node_domain and other settings");
+                "DNS compatibility must only remove the advertising policy and geosite:fake-ip-filter, preserving node_domain and other settings");
     }
 }
 
