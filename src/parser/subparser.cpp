@@ -2829,6 +2829,8 @@ void explodeStdVless(std::string vless, Proxy &node) {
     pbk = getUrlArg(addition, "pbk");
     sid = getUrlArg(addition, "sid");
     fp = getUrlArg(addition, "fp");
+    const bool spiderXPresent = startsWith(addition, "spx=") ||
+                                addition.find("&spx=") != std::string::npos;
     std::string packet_encoding = getUrlArg(addition, "packet-encoding");
     std::string encryption = getUrlArg(addition, "encryption");
     if (strFind(encryption, "%"))
@@ -2889,6 +2891,9 @@ void explodeStdVless(std::string vless, Proxy &node) {
     vlessConstruct(node, XRAY_DEFAULT_GROUP, remarks, add, port, type, id, aid, net, "auto", flow, mode, path, host, "",
                    tls, pbk, sid, fp, sni, alpnList, packet_encoding, tribool(), tribool(), tribool(),
                    tribool(), "", tribool(), encryption);
+    node.SpiderXPresent = spiderXPresent;
+    if (spiderXPresent)
+        node.SpiderX = urlDecode(getUrlArg(addition, "spx"));
     if (net == "xhttp") {
         // VLESS URI 来源：保留对 mihomo 旧链接别名的兼容
         if (!assignXhttpFields(node, xhttp_mode, xhttp_extra, xhttp_download_settings, true)) {

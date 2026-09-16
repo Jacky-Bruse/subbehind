@@ -354,7 +354,8 @@ static void addMihomoTlsOptsToYaml(const rapidjson::Value &d, YAML::Node out) {
 // Export Mihomo canonical download JSON to xhttp-opts.download-settings YAML node.
 // canonical 里成员存在即为显式覆盖（含空串、空对象），必须原样写出；
 // 成员缺失才表示沿用主连接，此时不写该键。
-static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_json) {
+static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_json,
+                                   bool force_reality_mlkem, const std::string &node_name) {
     if (download_json.empty())
         return;
     rapidjson::Document d;
@@ -384,12 +385,22 @@ static void addXhttpDownloadToYaml(YAML::Node opts, const std::string &download_
 
     if (d.HasMember("reality-opts") && d["reality-opts"].IsObject()) {
         const auto &ro = d["reality-opts"];
+        const bool hasReality = ro.HasMember("public-key") && ro["public-key"].IsString() &&
+                                ro["public-key"].GetStringLength() > 0;
         if (ro.HasMember("public-key") && ro["public-key"].IsString())
             setYamlString(ds["reality-opts"]["public-key"], ro["public-key"].GetString());
         if (ro.HasMember("short-id") && ro["short-id"].IsString())
             setYamlString(ds["reality-opts"]["short-id"], ro["short-id"].GetString(), true);
-        if (ro.HasMember("support-x25519mlkem768") && ro["support-x25519mlkem768"].IsBool())
+        if (force_reality_mlkem && hasReality) {
+            if (ro.HasMember("support-x25519mlkem768") && ro["support-x25519mlkem768"].IsBool() &&
+                !ro["support-x25519mlkem768"].GetBool())
+                writeLog(0, "Node '" + node_name + "': overriding explicit xhttp download-settings "
+                            "support-x25519mlkem768=false for mihomo VLESS REALITY export",
+                         LOG_LEVEL_WARNING);
+            ds["reality-opts"]["support-x25519mlkem768"] = true;
+        } else if (ro.HasMember("support-x25519mlkem768") && ro["support-x25519mlkem768"].IsBool()) {
             ds["reality-opts"]["support-x25519mlkem768"] = ro["support-x25519mlkem768"].GetBool();
+        }
         // 显式空对象同样是"清除继承"的有效覆盖，必须写出
         if (!ds["reality-opts"].IsDefined())
             ds["reality-opts"] = YAML::Node(YAML::NodeType::Map);
@@ -956,18 +967,26 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 if (!x.ShortId.empty()) {
                     setYamlString(singleproxy["reality-opts"]["short-id"], x.ShortId, true);
                 }
-                // 仅在确有 reality 配置时写出，避免产生只含该项的孤立 reality-opts
-                if (!x.PublicKey.empty() && !x.SupportX25519MLKEM768.is_undef())
+                // target=clash 对应 mihomo；服务端基线为 Xray-core >= 26.9.8，
+                // VLESS REALITY 必须保留 X25519MLKEM768。只覆盖导出值，不改内部三态。
+                if (!clashR && !x.PublicKey.empty()) {
+                    if (!x.SupportX25519MLKEM768.is_undef() && !x.SupportX25519MLKEM768.get())
+                        writeLog(0, "Node '" + x.Remark + "': overriding explicit "
+                                    "support-x25519mlkem768=false for mihomo VLESS REALITY export",
+                                 LOG_LEVEL_WARNING);
+                    singleproxy["reality-opts"]["support-x25519mlkem768"] = true;
+                } else if (!x.PublicKey.empty() && !x.SupportX25519MLKEM768.is_undef()) {
                     singleproxy["reality-opts"]["support-x25519mlkem768"] =
                         x.SupportX25519MLKEM768.get();
+                }
                 // 客户端指纹（uTLS）：显式设置时始终输出（含非 Reality 的普通 TLS 节点）；
-                // Reality 节点（有 public-key）即使未显式设置也需默认 random，否则 mihomo uTLS 无法握手。
+                // Reality 节点（有 public-key）未显式设置时使用支持新版握手的 chrome。
                 // 只认 ClientFingerprint：证书指纹另有 CertFingerprint 承载，
                 // 二者混用会让 mihomo 的 uTLS 拿到无效的指纹名
                 if (!x.ClientFingerprint.empty()) {
                     singleproxy["client-fingerprint"] = x.ClientFingerprint;
                 } else if (!x.PublicKey.empty()) {
-                    singleproxy["client-fingerprint"] = "random";
+                    singleproxy["client-fingerprint"] = clashR ? "random" : "chrome";
                 }
                 // 新增 mihomo 参数输出
                 if (!x.IpVersion.empty()) {
@@ -1102,7 +1121,8 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                                 }
                             }
                         }
-                        addXhttpDownloadToYaml(singleproxy["xhttp-opts"], x.XhttpDownload);
+                        addXhttpDownloadToYaml(singleproxy["xhttp-opts"], x.XhttpDownload,
+                                               !clashR, x.Remark);
                         break;
                     default:
                         // 回退为 tcp 而非丢弃：mihomo 运行时对未知 network 也是
@@ -1797,6 +1817,8 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                     addVlessParam("pbk", pbk);
                 if (!sid.empty())
                     addVlessParam("sid", sid);
+                if (x.SpiderXPresent)
+                    addVlessParam("spx", urlEncode(x.SpiderX));
                 if (!fp.empty())
                     addVlessParam("fp", fp);
                 if (!packet_encoding.empty())

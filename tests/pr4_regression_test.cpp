@@ -1550,8 +1550,9 @@ void test_clash_reality_support_x25519mlkem768_roundtrip() {
     }
 }
 
-// 未配置时不得凭空写出 false，否则等于替用户做了决定
-void test_clash_reality_omits_unset_x25519mlkem768() {
+// target=clash 代表 mihomo，服务端基线为 Xray-core >= 26.9.8：VLESS REALITY
+// 无论输入三态为何，导出均开启 ML-KEM，但不得回写内部原值。
+void test_clash_vless_reality_forces_x25519mlkem768_on_export() {
     const std::string content = R"(proxies:
   - name: reality-plain
     type: vless
@@ -1564,15 +1565,35 @@ void test_clash_reality_omits_unset_x25519mlkem768() {
       public-key: pbk-value
       short-id: aabbccdd
 )";
-    std::vector<Proxy> nodes{parse_clash(content)};
+    Proxy node = parse_clash(content);
+    require(node.SupportX25519MLKEM768.is_undef(),
+            "missing support-x25519mlkem768 must remain unset internally");
+    std::vector<Proxy> nodes{node};
     std::vector<RulesetContent> rulesets;
     ProxyGroupConfigs groups;
     extra_settings ext;
     ext.nodelist = true;
     ext.clash_new_field_name = true;
     const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
-    require(exported.find("support-x25519mlkem768") == std::string::npos,
-            "unset support-x25519mlkem768 must not be emitted, got:\n" + exported);
+    require(YAML::Load(exported)["proxies"][0]["reality-opts"]
+                ["support-x25519mlkem768"].as<bool>(),
+            "VLESS REALITY must force support-x25519mlkem768=true for mihomo");
+    require(nodes[0].SupportX25519MLKEM768.is_undef(),
+            "Clash export must not mutate the internal ML-KEM tri-state");
+
+    node.SupportX25519MLKEM768 = false;
+    nodes = {node};
+    const std::string falseExported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+    require(YAML::Load(falseExported)["proxies"][0]["reality-opts"]
+                ["support-x25519mlkem768"].as<bool>(),
+            "explicit false must be overridden in mihomo VLESS REALITY output");
+    require(!nodes[0].SupportX25519MLKEM768.get(),
+            "overriding output must not change explicit false internally");
+
+    const std::string clashRExported = proxyToClash(nodes, "", rulesets, groups, true, ext);
+    require(!YAML::Load(clashRExported)["proxies"][0]["reality-opts"]
+                ["support-x25519mlkem768"].as<bool>(),
+            "the target=clash override must not change ClashR output");
 }
 
 // download-settings 的 reality-opts 同样承载这个字段
@@ -1594,11 +1615,11 @@ void test_clash_download_settings_x25519mlkem768() {
         reality-opts:
           public-key: dl-pbk
           short-id: 11aa22bb
-          support-x25519mlkem768: true
+          support-x25519mlkem768: false
 )";
     const Proxy node = parse_clash(content);
-    require(node.XhttpDownload.find("support-x25519mlkem768") != std::string::npos,
-            "download-settings support-x25519mlkem768 must be parsed, got: " + node.XhttpDownload);
+    require(node.XhttpDownload.find("\"support-x25519mlkem768\":false") != std::string::npos,
+            "download-settings explicit false must be preserved internally, got: " + node.XhttpDownload);
 
     std::vector<Proxy> nodes{node};
     std::vector<RulesetContent> rulesets;
@@ -1610,9 +1631,11 @@ void test_clash_download_settings_x25519mlkem768() {
     const YAML::Node ro =
         YAML::Load(exported)["proxies"][0]["xhttp-opts"]["download-settings"]["reality-opts"];
     require(ro["support-x25519mlkem768"].as<bool>(),
-            "download-settings support-x25519mlkem768 must be exported");
+            "independent download-settings REALITY must force ML-KEM for mihomo");
     require(ro["public-key"].as<std::string>() == "dl-pbk",
             "download-settings public-key must still survive");
+    require(nodes[0].XhttpDownload.find("\"support-x25519mlkem768\":false") != std::string::npos,
+            "download-settings export must not mutate the internal explicit false");
 }
 
 // mihomo 的 BasicOption 被所有出站协议嵌入，其中 mptcp / interface-name /
@@ -3495,7 +3518,8 @@ void test_vless_link_ws_host_and_sni_distinct() {
     require(node.ServerName == "tls-sni.example.com", "SNI must come from sni=");
 }
 
-// P1-3: 非 Reality 节点若链接带 fp，client-fingerprint 需输出；Reality 无 short-id 仍需默认 random
+// P1-3: 非 Reality 节点若链接带 fp，client-fingerprint 需输出；VLESS REALITY
+// 未显式指定指纹时固定使用 chrome，以满足新版服务端的 ML-KEM ClientHello 要求。
 void test_vless_client_fingerprint_output() {
     // 普通 TLS ws 节点，链接带 fp=chrome
     {
@@ -3513,8 +3537,10 @@ void test_vless_client_fingerprint_output() {
         const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
         require(exported.find("client-fingerprint: chrome") != std::string::npos,
                 "plain TLS node must export client-fingerprint from fp=");
+        require(exported.find("support-x25519mlkem768") == std::string::npos,
+                "plain TLS node must not gain the REALITY ML-KEM option");
     }
-    // Reality 有 public-key、无 short-id、未显式 fp → 默认 random
+    // Reality 有 public-key、无 short-id、未显式 fp → 默认 chrome
     {
         const std::string content = R"(proxies:
   - name: reality-no-sid
@@ -3535,9 +3561,49 @@ void test_vless_client_fingerprint_output() {
         ext.nodelist = true;
         ext.clash_new_field_name = true;
         const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
-        require(exported.find("client-fingerprint: random") != std::string::npos,
-                "reality node without short-id must default client-fingerprint to random");
+        require(exported.find("client-fingerprint: chrome") != std::string::npos,
+                "VLESS REALITY without an explicit fingerprint must default to chrome");
+        const std::string clashRExported = proxyToClash(nodes, "", rulesets, groups, true, ext);
+        require(clashRExported.find("client-fingerprint: random") != std::string::npos,
+                "the chrome default must be scoped to target=clash");
     }
+}
+
+void test_vless_spider_x_roundtrip() {
+    constexpr int kVlessMask = 32;
+    extra_settings ext;
+    auto exportLink = [&](Proxy node) {
+        std::vector<Proxy> nodes{std::move(node)};
+        std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, kVlessMask, ext));
+        const auto newline = decoded.find('\n');
+        if (newline != std::string::npos)
+            decoded.erase(newline);
+        return decoded;
+    };
+
+    const std::string prefix =
+        "vless://12345678-1234-1234-1234-123456789012@reality.example.com:443"
+        "?security=reality&type=tcp&pbk=pubkey&sid=aabbccdd";
+
+    Proxy absent = parse_link(prefix + "#spx-absent");
+    require(!absent.SpiderXPresent, "missing spx must remain distinguishable from spx=");
+    require(exportLink(absent).find("spx=") == std::string::npos,
+            "missing spx must not be added during VLESS export");
+
+    Proxy empty = parse_link(prefix + "&spx=#spx-empty");
+    require(empty.SpiderXPresent && empty.SpiderX.empty(),
+            "spx= must preserve explicit presence with an empty value");
+    const Proxy emptyRoundTrip = parse_link(exportLink(empty));
+    require(emptyRoundTrip.SpiderXPresent && emptyRoundTrip.SpiderX.empty(),
+            "empty spx must survive VLESS round-trip");
+
+    Proxy valued = parse_link(prefix +
+        "&spx=%2Fcrawl%20path%3Fx%3D1%26y%3D2#spx-valued");
+    require(valued.SpiderXPresent && valued.SpiderX == "/crawl path?x=1&y=2",
+            "spx must be URL-decoded exactly once on input");
+    const Proxy valuedRoundTrip = parse_link(exportLink(valued));
+    require(valuedRoundTrip.SpiderXPresent && valuedRoundTrip.SpiderX == valued.SpiderX,
+            "spx must be URL-encoded exactly once and preserve its decoded value");
 }
 
 // P1-5: hysteria2 端口跳跃范围链接不得被丢弃，密码需 URL 解码
@@ -3841,7 +3907,7 @@ int main() {
         test_clash_tls_cert_fields_roundtrip_all_protocols();
         test_vless_link_browser_fingerprint_not_leaked_as_cert_fingerprint();
         test_clash_reality_support_x25519mlkem768_roundtrip();
-        test_clash_reality_omits_unset_x25519mlkem768();
+        test_clash_vless_reality_forces_x25519mlkem768_on_export();
         test_clash_download_settings_x25519mlkem768();
         test_clash_basic_option_dialer_fields_roundtrip();
         test_clash_basic_option_omits_unset_dialer_fields();
@@ -3900,6 +3966,7 @@ int main() {
         test_formatter_short_id_preserves_xhttp_download_settings();
         test_vless_link_ws_host_and_sni_distinct();
         test_vless_client_fingerprint_output();
+        test_vless_spider_x_roundtrip();
         test_hysteria2_link_port_hopping_and_password_decode();
         test_mieru_plaintext_link();
         test_anytls_clash_roundtrip_fields();

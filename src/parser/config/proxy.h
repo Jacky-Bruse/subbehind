@@ -224,6 +224,8 @@ struct Proxy {
 
     // ===== VLESS =====
     String ShortId;
+    String SpiderX;
+    bool SpiderXPresent = false;
     String Flow;
     String Encryption;  // Local: VLESS encryption field
     String VlessEncryption;  // MetaCubeX: mlkem768x25519plus.native/xorpub/random.1rtt/0rtt
@@ -275,8 +277,8 @@ struct Proxy {
     // ===== mTLS =====
     String Certificate;
     String PrivateKeyPem;
-    // reality-opts.support-x25519mlkem768：控制 ClientHello 是否保留 X25519MLKEM768
-    // 密钥共享组。用 tribool 以区分"未配置"与"显式 false"，未配置时不写出。
+    // reality-opts.support-x25519mlkem768：保留输入三态；VLESS REALITY 导出到
+    // mihomo 时根据目标端兼容策略决定最终值。
     tribool SupportX25519MLKEM768;
 
     // ===== BasicOption 拨号选项（mihomo 所有出站协议共有）=====
