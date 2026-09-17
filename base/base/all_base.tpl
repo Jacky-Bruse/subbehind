@@ -72,9 +72,7 @@ dns:
   fake-ip-range6: fdfe:dcba:9876::1/64
   prefer-h3: false
   respect-rules: true
-  cache: true
   cache-algorithm: arc
-  concurrent: true
   use-hosts: true
   
   # 核心修复 1: 必须使用国内基础 DNS 确保能解析机场域名
@@ -87,10 +85,10 @@ dns:
     - https://223.5.5.5/dns-query
     - https://1.12.12.12/dns-query
 
-  # 你的 Nameserver (主要用于解析国外域名，走代理)
+  # 正常模式指定 DNS 策略组；兼容模式遵循路由规则。
   nameserver:
-    - https://cloudflare-dns.com/dns-query
-    - https://dns.google/dns-query
+    - "https://cloudflare-dns.com/dns-query{% if default(request.dns_compat, "false") != "true" %}#DNS{% endif %}"
+    - "https://dns.google/dns-query{% if default(request.dns_compat, "false") != "true" %}#DNS{% endif %}"
 
   # 策略分流 (核心优化: 国内域名指定走国内 DoH，准确且防污染)
   nameserver-policy:
@@ -102,8 +100,8 @@ dns:
       - https://dns.alidns.com/dns-query
       - https://doh.pub/dns-query
     "geosite:category-ai-!cn":
-      - https://cloudflare-dns.com/dns-query
-      - https://dns.google/dns-query
+      - "https://cloudflare-dns.com/dns-query{% if default(request.dns_compat, "false") != "true" %}#DNS{% endif %}"
+      - "https://dns.google/dns-query{% if default(request.dns_compat, "false") != "true" %}#DNS{% endif %}"
 
   # 优化后的 Filter
   fake-ip-filter:

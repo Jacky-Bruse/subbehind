@@ -3834,6 +3834,11 @@ void test_all_base_clash_dns_compat() {
     for (const std::string &domain : {std::string(), std::string("example.com")}) {
         const string_map globals{{"clash.node_domain", domain}};
         const YAML::Node normal = YAML::Load(render_all_base_clash(globals));
+        const std::vector<std::string> proxyDNS{
+            "https://cloudflare-dns.com/dns-query#DNS", "https://dns.google/dns-query#DNS"};
+        require(normal["dns"]["nameserver"].as<std::vector<std::string>>() == proxyDNS &&
+                    normal["dns"]["nameserver-policy"]["geosite:category-ai-!cn"].as<std::vector<std::string>>() == proxyDNS,
+                "normal DNS must explicitly route both foreign DoH lists through the DNS group");
         require(!normal["dns"]["fallback"].IsDefined() && !normal["dns"]["fallback-filter"].IsDefined(),
                 "DNS must omit the redundant fallback configuration");
         const YAML::Node policy = normal["dns"]["nameserver-policy"];
@@ -3860,9 +3865,13 @@ void test_all_base_clash_dns_compat() {
         require(removed, "normal DNS must retain geosite:fake-ip-filter");
         expected["dns"]["fake-ip-filter"] = filters;
         expected["dns"]["nameserver-policy"].remove("geosite:category-ads-all");
+        const std::vector<std::string> compatDNS{
+            "https://cloudflare-dns.com/dns-query", "https://dns.google/dns-query"};
+        expected["dns"]["nameserver"] = compatDNS;
+        expected["dns"]["nameserver-policy"]["geosite:category-ai-!cn"] = compatDNS;
         const YAML::Node compat = YAML::Load(render_all_base_clash(globals, {{"dns_compat", "true"}}));
         require(YAML::Dump(compat) == YAML::Dump(expected),
-                "DNS compatibility must only remove the advertising policy and geosite:fake-ip-filter, preserving node_domain and other settings");
+                "DNS compatibility must only remove the advertising policy, geosite:fake-ip-filter and explicit DNS group, preserving node_domain and other settings");
     }
 }
 
