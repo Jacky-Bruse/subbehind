@@ -3834,6 +3834,12 @@ void test_all_base_clash_dns_compat() {
     for (const std::string &domain : {std::string(), std::string("example.com")}) {
         const string_map globals{{"clash.node_domain", domain}};
         const YAML::Node normal = YAML::Load(render_all_base_clash(globals));
+        require(!normal["dns"]["fallback"].IsDefined() && !normal["dns"]["fallback-filter"].IsDefined(),
+                "DNS must omit the redundant fallback configuration");
+        const YAML::Node policy = normal["dns"]["nameserver-policy"];
+        require(policy.IsMap() && policy.size() == 3 &&
+                    policy.begin()->first.as<std::string>() == "geosite:category-ads-all",
+                "advertising DNS policy must precede the domestic policy");
         const YAML::Node ads = normal["dns"]["nameserver-policy"]["geosite:category-ads-all"];
         require(ads.IsSequence() && ads.size() == 1 && ads[0].as<std::string>() == "rcode://name_error",
                 "normal DNS must retain the NXDOMAIN advertising policy");

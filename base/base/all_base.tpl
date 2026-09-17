@@ -94,31 +94,17 @@ dns:
 
   # 策略分流 (核心优化: 国内域名指定走国内 DoH，准确且防污染)
   nameserver-policy:
-    "geosite:cn,private": # 包含 cn 和 私有域名
-      - https://dns.alidns.com/dns-query
-      - https://doh.pub/dns-query
 {% if default(request.dns_compat, "false") != "true" %}
     "geosite:category-ads-all": # 广告域名
       - "rcode://name_error"
 {% endif %}
+    "geosite:cn,private": # 包含 cn 和 私有域名
+      - https://dns.alidns.com/dns-query
+      - https://doh.pub/dns-query
     "geosite:category-ai-!cn":
       - https://cloudflare-dns.com/dns-query
       - https://dns.google/dns-query
 
-  # Fallback 模块优化: 
-  # 因为有了上面的 nameserver-policy，fallback 实际上很少被触发。
-  # 我们可以保留一个简单的配置作为兜底，或者直接移除。
-  # 如果你一定要用，保持简单：
-  fallback:
-    - https://cloudflare-dns.com/dns-query
-    - https://dns.google/dns-query
-  
-  fallback-filter:
-    geoip: true
-    geoip-code: CN
-    ipcidr:
-      - 240.0.0.0/4
-  
   # 优化后的 Filter
   fake-ip-filter:
     # "+.openai.com" 已覆盖 *.openai.com / auth.openai.com / api.openai.com
