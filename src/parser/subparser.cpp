@@ -2615,6 +2615,21 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                 continue;
         }
 
+        // Keep the Mihomo-only options that do not fit the shared transport fields.
+        if (singleproxy["smux"].IsMap())
+            node.MihomoSmux = YAML::Dump(singleproxy["smux"]);
+        if (node.TransferProtocol == "ws") {
+            const Node headers = singleproxy["ws-opts"].IsMap()
+                                     ? singleproxy["ws-opts"]["headers"]
+                                     : singleproxy["ws-headers"];
+            if (headers.IsMap())
+                node.WsHeaders = YAML::Dump(headers);
+        } else if (node.TransferProtocol == "grpc") {
+            singleproxy["grpc-opts"]["grpc-user-agent"] >>= node.GRPCUserAgent;
+            if (singleproxy["grpc-opts"]["ping-interval"].IsDefined())
+                node.GRPCPingInterval = safe_as<uint32_t>(singleproxy["grpc-opts"]["ping-interval"]);
+        }
+
         // TLS 证书类字段：mihomo 的 VlessOption/VmessOption/TrojanOption/AnyTLSOption
         // 都有。fingerprint 是服务器证书 pinning（SHA256），与 client-fingerprint 的
         // uTLS 浏览器指纹是两个独立字段，切勿混用。

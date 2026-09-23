@@ -147,6 +147,8 @@ struct Proxy {
     // ===== gRPC =====
     String GRPCServiceName;
     String GRPCMode;
+    String GRPCUserAgent;
+    uint32_t GRPCPingInterval = 0;
     uint32_t GRPCMaxConnections = 0;
     uint32_t GRPCMinStreams = 0;
     uint32_t GRPCMaxStreams = 0;
@@ -273,6 +275,7 @@ struct Proxy {
     tribool SmuxPadding;
     tribool SmuxStatistic;
     tribool SmuxOnlyTcp;
+    String MihomoSmux;  // YAML map; preserves common smux options, including brutal-opts
 
     // ===== mTLS =====
     String Certificate;
@@ -294,6 +297,7 @@ struct Proxy {
     // ===== WebSocket =====
     uint32_t WsMaxEarlyData = 0;
     String WsEarlyDataHeaderName;
+    String WsHeaders;  // YAML map; preserves custom headers beyond Host/Edge
     tribool V2rayHttpUpgrade;
     tribool V2rayHttpUpgradeFastOpen;
 

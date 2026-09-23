@@ -3569,6 +3569,66 @@ void test_vless_client_fingerprint_output() {
     }
 }
 
+void test_clash_xray_auxiliary_options_roundtrip() {
+    const std::string content = R"(proxies:
+  - name: mux-node
+    type: vless
+    server: example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: tcp
+    smux:
+      enabled: true
+      protocol: h2mux
+      brutal-opts:
+        enabled: true
+        up: 50
+        down: 100
+  - name: ws-node
+    type: vless
+    server: example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: ws
+    ws-opts:
+      path: /ws
+      headers:
+        Host: cdn.example.com
+        X-Token: abc123
+  - name: grpc-node
+    type: vless
+    server: example.com
+    port: 443
+    uuid: 12345678-1234-1234-1234-123456789012
+    tls: true
+    network: grpc
+    grpc-opts:
+      grpc-service-name: svc
+      grpc-user-agent: custom-agent
+      ping-interval: 30
+)";
+    std::vector<Proxy> nodes;
+    explodeSub(content, nodes);
+    require(nodes.size() == 3, "expected three Xray nodes");
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.clash_new_field_name = true;
+    const YAML::Node proxies = YAML::Load(proxyToClash(nodes, "", rulesets, groups, false, ext))["proxies"];
+    require(proxies.size() == 3, "expected three exported Xray nodes");
+    require(proxies[0]["smux"]["brutal-opts"]["up"].as<int>() == 50,
+            "expected nested smux options to survive conversion");
+    require(proxies[1]["ws-opts"]["headers"]["X-Token"].as<std::string>() == "abc123",
+            "expected custom WS header to survive conversion");
+    require(proxies[2]["grpc-opts"]["grpc-user-agent"].as<std::string>() == "custom-agent",
+            "expected gRPC User-Agent to survive conversion");
+    require(proxies[2]["grpc-opts"]["ping-interval"].as<int>() == 30,
+            "expected gRPC ping interval to survive conversion");
+}
+
 void test_vless_spider_x_roundtrip() {
     constexpr int kVlessMask = 32;
     extra_settings ext;
@@ -4009,6 +4069,7 @@ int main() {
         test_clash_vless_xhttp_reuse_settings_h_keep_alive_period();
         test_clash_vless_xhttp_sc_max_range_passthrough();
         test_clash_vless_grpc_new_opts();
+        test_clash_xray_auxiliary_options_roundtrip();
         test_formatter_short_id_preserves_xhttp_download_settings();
         test_vless_link_ws_host_and_sni_distinct();
         test_vless_client_fingerprint_output();

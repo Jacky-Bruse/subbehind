@@ -1137,6 +1137,21 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                 continue;
         }
 
+        if (!x.MihomoSmux.empty())
+            singleproxy["smux"] = YAML::Load(x.MihomoSmux);
+        if (x.TransferProtocol == "ws" && !x.WsHeaders.empty()) {
+            if (singleproxy["ws-opts"].IsMap())
+                singleproxy["ws-opts"]["headers"] = YAML::Load(x.WsHeaders);
+            else
+                singleproxy["ws-headers"] = YAML::Load(x.WsHeaders);
+        }
+        if (x.TransferProtocol == "grpc") {
+            if (!x.GRPCUserAgent.empty())
+                setYamlString(singleproxy["grpc-opts"]["grpc-user-agent"], x.GRPCUserAgent);
+            if (x.GRPCPingInterval > 0)
+                singleproxy["grpc-opts"]["ping-interval"] = x.GRPCPingInterval;
+        }
+
         // TLS 证书类字段，mihomo 的 VlessOption/VmessOption/TrojanOption 共有。
         // CertFingerprint 是服务器证书 pinning，与 client-fingerprint 分属两个键
         switch (x.Type) {
