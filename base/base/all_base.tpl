@@ -105,6 +105,7 @@ dns:
 
   # 优化后的 Filter
   fake-ip-filter:
+    - "api.typesafe.ai"
     # "+.openai.com" 已覆盖 *.openai.com / auth.openai.com / api.openai.com
     - "+.openai.com"
     - "api.openai.com.cdn.cloudflare.net"   # 后缀是 cloudflare.net，不被上一条覆盖
