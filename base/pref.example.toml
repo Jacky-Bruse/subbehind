@@ -117,7 +117,7 @@ match = '^Smart Access expire: (\d+)/(\d+)/(\d+)$'
 replace = '$1:$2:$3:0:0:0'
 
 [node_pref]
-#udp_flag = false
+udp_flag = true
 #tcp_fast_open_flag = false
 #skip_cert_verify_flag = false
 #tls13_flag = false
