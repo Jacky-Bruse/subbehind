@@ -937,6 +937,10 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["port-range"] = x.Ports;
                     singleproxy.remove("port");
                 }
+                if (!x.HandshakeMode.empty())
+                    singleproxy["handshake-mode"] = x.HandshakeMode;
+                if (!x.TrafficPattern.empty())
+                    singleproxy["traffic-pattern"] = x.TrafficPattern;
                 break;
             case ProxyType::VLESS:
                 singleproxy["type"] = "vless";
@@ -1788,7 +1792,8 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
             case ProxyType::Hysteria2:
                 if (!hysteria2)
                     continue;
-                proxyStr = "hysteria2://" + password + "@" + hostname + ":" + port + (ports.empty() ? "" : "," + ports)
+                // 端口跳跃按官方 URI 规范直接写在端口段；不再拼接基准端口，否则回读会多出一个跳跃端口
+                proxyStr = "hysteria2://" + urlEncode(password) + "@" + hostname + ":" + (ports.empty() ? port : ports)
                            + "?insecure=" +
                            (x.AllowInsecure.get() ? "1" : "0");
                 if (!obfsparam.empty()) {
@@ -2016,7 +2021,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
             case ProxyType::Trojan:
                 if (!trojan)
                     continue;
-                proxyStr = "trojan://" + password + "@" + hostname + ":" + port + "?allowInsecure=" +
+                proxyStr = "trojan://" + urlEncode(password) + "@" + hostname + ":" + port + "?allowInsecure=" +
                            (x.AllowInsecure.get() ? "1" : "0");
                 if (!sni.empty()) {
                     proxyStr += "&sni=" + sni;
@@ -2047,7 +2052,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
             case ProxyType::AnyTLS:
                 if (!anytls)
                     continue;
-                proxyStr = "anytls://" + password + "@" + hostname + ":" + port + "?insecure=" +
+                proxyStr = "anytls://" + urlEncode(password) + "@" + hostname + ":" + port + "?insecure=" +
                            (x.AllowInsecure.get() ? "1" : "0");
                 if (!x.SNI.empty())
                     proxyStr += "&sni=" + urlEncode(x.SNI);
@@ -2064,7 +2069,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                 if (!tuic || id.empty())
                     continue;
                 // 参数名沿用 v2rayN / NekoBox 的写法
-                proxyStr = "tuic://" + id + ":" + password + "@" + hostname + ":" + port + "?udp_relay_mode=" +
+                proxyStr = "tuic://" + urlEncode(id) + ":" + urlEncode(password) + "@" + hostname + ":" + port + "?udp_relay_mode=" +
                            (x.UdpRelayMode.empty() ? "native" : x.UdpRelayMode);
                 if (!x.CongestionControl.empty())
                     proxyStr += "&congestion_control=" + x.CongestionControl;
@@ -2080,11 +2085,15 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                 if (!mieru)
                     continue;
                 // mieru 官方简单分享链接：mierus://用户名:密码@服务器?参数，profile 必须出现一次
-                proxyStr = "mierus://" + x.Username + ":" + password + "@" + hostname + "?profile=default&port=" +
+                proxyStr = "mierus://" + urlEncode(x.Username) + ":" + urlEncode(password) + "@" + hostname + "?profile=default&port=" +
                            (ports.empty() ? port : ports) + "&protocol=" +
                            (transproto.empty() ? "TCP" : transproto);
                 if (!x.Multiplexing.empty())
                     proxyStr += "&multiplexing=" + x.Multiplexing;
+                if (!x.HandshakeMode.empty())
+                    proxyStr += "&handshake-mode=" + x.HandshakeMode;
+                if (!x.TrafficPattern.empty())
+                    proxyStr += "&traffic-pattern=" + urlEncode(x.TrafficPattern);
                 proxyStr += "#" + urlEncode(remark);
                 break;
             default:

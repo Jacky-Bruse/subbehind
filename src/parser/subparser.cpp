@@ -568,6 +568,11 @@ void extractRemark(std::string &link, std::string &remark) {
     }
 }
 
+// 链接 userinfo 按 RFC 3986 只做百分号解码；urlDecode 会把 '+' 当空格，密码里的 '+' 会被破坏
+static std::string decodeUserinfo(const std::string &str) {
+    return urlDecode(replaceAllDistinct(str, "+", "%2B"));
+}
+
 std::vector<std::string> getUrlAlpnList(const std::string &addition) {
     std::vector<std::string> result;
     std::string alpn = urlDecode(getUrlArg(addition, "alpn"));
@@ -1627,6 +1632,7 @@ void explodeTrojan(std::string trojan, Proxy &node) {
         return;
     if (port == "0")
         return;
+    psk = decodeUserinfo(psk);
 
     sni = getUrlArg(addition, "sni");
     host = getUrlArg(addition, "host");
@@ -1686,14 +1692,14 @@ void explodeMierus(std::string mierus, Proxy &node) {
             explodeStdMieru(mierus.substr(9), node);
         } else {
             mierus = urlSafeBase64Decode(mierus.substr(9));
-            explodeStdMieru("mierus://" + mierus, node);
+            explodeStdMieru(mierus, node);
         }
     } else if (strFind(mierus, "mieru://")) {
         if (regMatch(mierus, "mieru://(.*?)@(.*)")) {
             explodeStdMieru(mierus.substr(8), node);
         } else {
             mierus = urlSafeBase64Decode(mierus.substr(8));
-            explodeStdMieru("mierus://" + mierus, node);
+            explodeStdMieru(mierus, node);
         }
     }
 }
@@ -2610,6 +2616,8 @@ void explodeClash(Node yamlnode, std::vector<Proxy> &nodes) {
                                transfer_protocol,
                                udp,
                                tribool(), scv, tribool(), underlying_proxy);
+                singleproxy["handshake-mode"] >>= node.HandshakeMode;
+                singleproxy["traffic-pattern"] >>= node.TrafficPattern;
                 break;
             default:
                 continue;
@@ -2746,9 +2754,23 @@ void explodeStdMieru(std::string mieru, Proxy &node) {
     // 账号密码@host
     if (regGetMatch(mieru, R"(^(.*?):(.*?)@(.*)$)", 4, 0, &username, &password, &host))
         return;
+    username = decodeUserinfo(username);
+    password = decodeUserinfo(password);
 
-    // 提取端口（port=多个情况）
+    // 提取端口（port=多个情况）。规范允许 port/protocol 多次出现且按位置配对，
+    // getUrlArg 取最后一次出现，二者恰好仍是一对；mihomo 单节点也只接受一组。
     port = getUrlArg(addition, "port");
+    // 非规范写法 user:pass@host:port 兜底
+    if (port.empty()) {
+        string_size colon = host.rfind(':');
+        if (colon != std::string::npos && host.find(']', colon) == std::string::npos) {
+            port = host.substr(colon + 1);
+            host.erase(colon);
+        }
+    }
+    // mihomo 要求 port 或 port-range 必有其一，缺了会让整份配置加载失败
+    if (to_int(port, 0) <= 0)
+        return;
     if (port.find('-') != std::string::npos) {
         ports = port;
     }
@@ -2764,6 +2786,8 @@ void explodeStdMieru(std::string mieru, Proxy &node) {
     mieruConstruct(node, "MieruGroup", remarks, port,
                    password, host, ports, username, multiplexing, protocol,
                    udp, tfo, scv, tls13, "");
+    node.HandshakeMode = getUrlArg(addition, "handshake-mode");
+    node.TrafficPattern = decodeUserinfo(getUrlArg(addition, "traffic-pattern"));
 }
 
 void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
@@ -2798,7 +2822,7 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
             return;
     }
     // 密码可能被 URL 编码（含特殊字符时），需解码还原
-    password = urlDecode(password);
+    password = decodeUserinfo(password);
 
     scv = getUrlArg(addition, "insecure");
     up = getUrlArg(addition, "up");
@@ -4302,14 +4326,12 @@ void explodeTuic(const std::string &tuic, Proxy &node) {
     std::string uuid;
     pos = link.find(":");
     if (pos != std::string::npos) {
-        uuid = link.substr(0, pos);
+        uuid = decodeUserinfo(link.substr(0, pos));
         link = link.substr(pos + 1);
-        if (strFind(link, "@")) {
-            pos = link.find("@");
-            if (pos != std::string::npos) {
-                password = link.substr(0, pos);
-                link = link.substr(pos + 1);
-            }
+        pos = link.rfind("@");
+        if (pos != std::string::npos) {
+            password = decodeUserinfo(link.substr(0, pos));
+            link = link.substr(pos + 1);
         }
     }
 
@@ -4363,16 +4385,22 @@ void explodeAnyTLS(std::string anytls, Proxy &node) {
         anytls.erase(pos);
     }
 
-    pos = anytls.find("@");
+    pos = anytls.rfind("@");
     if (pos != anytls.npos) {
-        password = anytls.substr(0, pos);
+        password = decodeUserinfo(anytls.substr(0, pos));
         anytls = anytls.substr(pos + 1);
     }
 
+    // 规范写法 host:port/?...，端口可省略（默认 443）
+    if (!anytls.empty() && anytls.back() == '/')
+        anytls.pop_back();
     pos = anytls.rfind(":");
-    if (pos != anytls.npos) {
+    if (pos != anytls.npos && anytls.find(']', pos) == anytls.npos) {
         add = anytls.substr(0, pos);
         port = anytls.substr(pos + 1);
+    } else {
+        add = anytls;
+        port = "443";
     }
 
     if (add.length() > 2 && add.front() == '[' && add.back() == ']')

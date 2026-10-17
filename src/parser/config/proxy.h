@@ -311,6 +311,8 @@ struct Proxy {
 
     // ===== Mieru (Local) =====
     String Multiplexing;
+    String HandshakeMode;
+    String TrafficPattern;
 };
 
 #define SS_DEFAULT_GROUP "SSProvider"

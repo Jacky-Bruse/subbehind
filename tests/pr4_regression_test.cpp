@@ -3689,6 +3689,8 @@ void test_mieru_plaintext_link() {
     require(nodes.front().Type == ProxyType::Mieru, "expected Mieru node");
     require(nodes.front().Username == "myuser", "mieru username must parse correctly");
     require(nodes.front().Password == "mypass", "mieru password must parse correctly");
+    require(nodes.front().Hostname == "mieru.example.com" && nodes.front().Port == 8964,
+            "non-standard mieru host:port must be split into server and port");
 }
 
 // P1-2 + P2-2: AnyTLS 往返保留 sni、client-fingerprint、全部 alpn 与 idle 字段
@@ -3986,8 +3988,9 @@ void test_hysteria2_link_obfs_password_and_mport() {
             "hysteria2 link export must write the obfs password, got:\n" + decoded);
     const Proxy back = parse_link(decoded);
     require(back.OBFSPassword == "op&x", "hysteria2 obfs password must survive a link round-trip");
-    require(decoded.find("h.example.com:443,20000-30000?") != std::string::npos,
-            "hysteria2 link export must keep the mport hop range, got:\n" + decoded);
+    require(decoded.find("h.example.com:20000-30000?") != std::string::npos,
+            "hysteria2 link export must put the hop range in the port field, got:\n" + decoded);
+    require(back.Ports == "20000-30000", "hysteria2 port hopping must round-trip without the base port");
 }
 
 // mixed / shadowrocket 订阅需导出 AnyTLS、TUIC、Mieru，且能被本项目解析回来
@@ -4051,6 +4054,79 @@ void test_vmess_xudp_flag_export() {
             "xudp=true must enable xudp on Clash VMess");
     require(proxyToSingBox(nodes, "", rulesets, groups, ext).find(R"("packet_encoding":"xudp")") != std::string::npos,
             "xudp=true must set packet_encoding on sing-box VMess");
+}
+
+// mieru 链接缺端口时 mihomo 会拒绝整份配置，必须丢弃；handshake-mode/traffic-pattern 需保留
+void test_mieru_link_port_required_and_extra_fields() {
+    std::vector<Proxy> nodes;
+    explodeSub("mierus://u:p@m.example.com?profile=default&protocol=TCP#no-port", nodes);
+    require(nodes.empty(), "mieru link without port must be dropped");
+
+    const Proxy b64 = parse_link("mieru://" + base64Encode("bu:bp@b.example.com?port=2999&protocol=TCP") + "#b64");
+    require(b64.Username == "bu" && b64.Password == "bp" && b64.Hostname == "b.example.com" && b64.Port == 2999,
+            "base64-wrapped mieru link must parse user, password and server");
+
+    const Proxy node = parse_link(
+        "mierus://u:p@m.example.com?handshake-mode=HANDSHAKE_NO_WAIT&port=6666&port=9998-9999&profile=default"
+        "&protocol=TCP&protocol=UDP&traffic-pattern=CCoQARoE%2BAEQ#m");
+    require(node.Ports == "9998-9999" && node.TransferProtocol == "UDP",
+            "mieru must keep the last port/protocol pair");
+    require(node.HandshakeMode == "HANDSHAKE_NO_WAIT", "mieru handshake-mode must be parsed");
+    require(node.TrafficPattern == "CCoQARoE+AEQ", "mieru traffic-pattern must be percent-decoded");
+
+    std::vector<Proxy> list{node};
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    const std::string clash = proxyToClash(list, "", rulesets, groups, false, ext);
+    require(clash.find("handshake-mode: HANDSHAKE_NO_WAIT") != std::string::npos &&
+                clash.find("traffic-pattern: CCoQARoE+AEQ") != std::string::npos,
+            "Clash mieru export must keep handshake-mode and traffic-pattern, got:\n" + clash);
+    const Proxy back = parse_clash(clash);
+    require(back.HandshakeMode == "HANDSHAKE_NO_WAIT" && back.TrafficPattern == "CCoQARoE+AEQ",
+            "Clash mieru parse must keep handshake-mode and traffic-pattern");
+
+    const Proxy relinked = parse_link(proxyToSingle(list, 256, ext));
+    require(relinked.HandshakeMode == "HANDSHAKE_NO_WAIT" && relinked.TrafficPattern == "CCoQARoE+AEQ",
+            "mieru link export must keep handshake-mode and traffic-pattern");
+}
+
+// AnyTLS URI 规范允许省略端口（默认 443）及 host:port/? 写法
+void test_anytls_link_default_port() {
+    const Proxy noport = parse_link("anytls://letmein@example.com/?sni=real.example.com#a");
+    require(noport.Hostname == "example.com" && noport.Port == 443, "anytls link without port must default to 443");
+    const Proxy v6 = parse_link("anytls://pw@[2409:8a71:6a00:1953::615]/?insecure=1#b");
+    require(v6.Hostname == "2409:8a71:6a00:1953::615" && v6.Port == 443,
+            "bracketed IPv6 anytls link without port must default to 443");
+    const Proxy slash = parse_link("anytls://letmein@example.com:8443/?sni=real.example.com#c");
+    require(slash.Hostname == "example.com" && slash.Port == 8443, "anytls host:port/? form must parse");
+}
+
+// 链接 userinfo 中的特殊字符需百分号编码导出，并按 RFC 3986 解码（'+' 保持字面）
+void test_link_userinfo_special_chars_roundtrip() {
+    const std::string pw = "p@ss+w#rd?&:/ %";
+    std::vector<Proxy> nodes;
+    explodeSub("proxies:\n"
+               "  - {name: tr, type: trojan, server: t.example.com, port: 443, password: 'p@ss+w#rd?&:/ %'}\n"
+               "  - {name: hy, type: hysteria2, server: h.example.com, port: 443, password: 'p@ss+w#rd?&:/ %'}\n"
+               "  - {name: at, type: anytls, server: a.example.com, port: 443, password: 'p@ss+w#rd?&:/ %'}\n"
+               "  - {name: tu, type: tuic, server: u.example.com, port: 443, uuid: 11111111-2222-3333-4444-555555555555, password: 'p@ss+w#rd?&:/ %'}\n"
+               "  - {name: mi, type: mieru, server: m.example.com, port: 2999, transport: TCP, username: 'u+1@x', password: 'p@ss+w#rd?&:/ %'}\n",
+               nodes);
+    require(nodes.size() == 5, "expected five Clash nodes");
+
+    extra_settings ext;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, 511, ext));
+    std::vector<Proxy> back;
+    explodeSub(decoded, back);
+    require(back.size() == 5, "all links with special-char passwords must re-parse, got:\n" + decoded);
+    for (const Proxy &x : back)
+        require(x.Password == pw, "password must round-trip for " + x.Remark + ", got: " + x.Password);
+    require(back[4].Username == "u+1@x", "mieru username must round-trip");
+
+    require(parse_link("trojan://a+b@t.example.com:443#t").Password == "a+b",
+            "a literal '+' in link userinfo must not become a space");
 }
 
 int main() {
@@ -4172,6 +4248,9 @@ int main() {
         test_hysteria2_link_obfs_password_and_mport();
         test_mixed_exports_anytls_tuic_mieru();
         test_vmess_xudp_flag_export();
+        test_mieru_link_port_required_and_extra_fields();
+        test_anytls_link_default_port();
+        test_link_userinfo_special_chars_roundtrip();
     } catch (const std::exception &e) {
         std::cerr << "pr4_regression_test failed: " << e.what() << '\n';
         return 1;
