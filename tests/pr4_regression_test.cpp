@@ -3971,6 +3971,88 @@ void test_all_base_clash_template_values_cannot_inject_yaml() {
 
 } // namespace
 
+// hy2 链接导出曾把 obfs 类型名写进 obfs-password；mport 是 v2rayN/NekoBox 的端口跳跃参数
+void test_hysteria2_link_obfs_password_and_mport() {
+    const Proxy node = parse_link(
+        "hysteria2://pw@h.example.com:443?sni=h.example.com&obfs=salamander&obfs-password=op%26x"
+        "&mport=20000-30000#hy2-obfs");
+    require(node.OBFSPassword == "op&x", "hysteria2 obfs-password must be URL-decoded");
+    require(node.Ports == "20000-30000", "hysteria2 mport must map to ports");
+
+    std::vector<Proxy> nodes{node};
+    extra_settings ext;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, 16, ext));
+    require(decoded.find("obfs-password=op%26x") != std::string::npos,
+            "hysteria2 link export must write the obfs password, got:\n" + decoded);
+    const Proxy back = parse_link(decoded);
+    require(back.OBFSPassword == "op&x", "hysteria2 obfs password must survive a link round-trip");
+    require(decoded.find("h.example.com:443,20000-30000?") != std::string::npos,
+            "hysteria2 link export must keep the mport hop range, got:\n" + decoded);
+}
+
+// mixed / shadowrocket 订阅需导出 AnyTLS、TUIC、Mieru，且能被本项目解析回来
+void test_mixed_exports_anytls_tuic_mieru() {
+    std::vector<Proxy> nodes;
+    explodeSub(R"(proxies:
+  - {name: at, type: anytls, server: at.example.com, port: 443, password: secret, sni: at-sni.example.com, client-fingerprint: chrome, skip-cert-verify: true, alpn: [h2, http/1.1]}
+  - {name: tu, type: tuic, server: tu.example.com, port: 8443, uuid: 11111111-2222-3333-4444-555555555555, password: tpw, sni: tu-sni.example.com, alpn: [h3], congestion-controller: bbr, udp-relay-mode: quic, skip-cert-verify: true}
+  - {name: tu4, type: tuic, server: tu4.example.com, port: 8443, token: tok}
+  - {name: mi, type: mieru, server: mi.example.com, port-range: 2090-2099, transport: TCP, username: mu, password: mp, multiplexing: MULTIPLEXING_HIGH}
+)", nodes);
+    require(nodes.size() == 4, "expected four Clash nodes");
+
+    extra_settings ext;
+    const std::string decoded = urlSafeBase64Decode(proxyToSingle(nodes, 511, ext));
+    std::vector<Proxy> back;
+    explodeSub(decoded, back);
+    require(back.size() == 3, "mixed must export AnyTLS/TUIC v5/Mieru and skip TUIC v4, got:\n" + decoded);
+
+    const Proxy &at = back[0];
+    require(at.Type == ProxyType::AnyTLS && at.Hostname == "at.example.com" && at.Port == 443 &&
+                at.Password == "secret" && at.SNI == "at-sni.example.com" && at.ClientFingerprint == "chrome" &&
+                at.AllowInsecure.get() && at.AlpnList.size() == 2,
+            "AnyTLS link must round-trip, got:\n" + decoded);
+
+    const Proxy &tu = back[1];
+    require(tu.Type == ProxyType::TUIC && tu.Port == 8443 && tu.UserId == "11111111-2222-3333-4444-555555555555" &&
+                tu.Password == "tpw" && tu.ServerName == "tu-sni.example.com" && tu.Alpn == "h3" &&
+                tu.CongestionControl == "bbr" && tu.UdpRelayMode == "quic" && tu.AllowInsecure.get(),
+            "TUIC link must round-trip, got:\n" + decoded);
+
+    const Proxy &mi = back[2];
+    require(mi.Type == ProxyType::Mieru && mi.Hostname == "mi.example.com" && mi.Ports == "2090-2099" &&
+                mi.Username == "mu" && mi.Password == "mp" && mi.TransferProtocol == "TCP" &&
+                mi.Multiplexing == "MULTIPLEXING_HIGH",
+            "Mieru link must round-trip, got:\n" + decoded);
+    require(decoded.find("profile=default") != std::string::npos,
+            "mierus link must carry the mandatory profile parameter");
+}
+
+// xudp 参数：mihomo VMess 默认不开 XUDP，需要由参数显式开启
+void test_vmess_xudp_flag_export() {
+    std::vector<Proxy> nodes;
+    explodeSub(R"(proxies:
+  - {name: vm, type: vmess, server: vm.example.com, port: 443, uuid: 11111111-2222-3333-4444-555555555555, alterId: 0, cipher: auto}
+)", nodes);
+    require(nodes.size() == 1, "expected one VMess node");
+
+    std::vector<RulesetContent> rulesets;
+    ProxyGroupConfigs groups;
+    extra_settings ext;
+    ext.nodelist = true;
+    ext.udp = true;
+    require(proxyToClash(nodes, "", rulesets, groups, false, ext).find("xudp") == std::string::npos,
+            "VMess must not get xudp without the xudp parameter");
+    require(proxyToSingBox(nodes, "", rulesets, groups, ext).find("packet_encoding") == std::string::npos,
+            "sing-box VMess must not get packet_encoding without the xudp parameter");
+
+    ext.xudp = true;
+    require(proxyToClash(nodes, "", rulesets, groups, false, ext).find("xudp: true") != std::string::npos,
+            "xudp=true must enable xudp on Clash VMess");
+    require(proxyToSingBox(nodes, "", rulesets, groups, ext).find(R"("packet_encoding":"xudp")") != std::string::npos,
+            "xudp=true must set packet_encoding on sing-box VMess");
+}
+
 int main() {
     try {
         test_vmess_conf_reads_mixed_case_wssettings();
@@ -4087,6 +4169,9 @@ int main() {
         test_all_base_clash_node_domain_emitted_when_set();
         test_all_base_clash_secret_with_quote_keeps_yaml_valid();
         test_all_base_clash_template_values_cannot_inject_yaml();
+        test_hysteria2_link_obfs_password_and_mport();
+        test_mixed_exports_anytls_tuic_mieru();
+        test_vmess_xudp_flag_export();
     } catch (const std::exception &e) {
         std::cerr << "pr4_regression_test failed: " << e.what() << '\n';
         return 1;

@@ -309,6 +309,9 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
         case "v2ray"_hash:
         case "trojan"_hash:
         case "mixed"_hash:
+        case "shadowrocket"_hash:
+        case "vless"_hash:
+        case "hysteria2"_hash:
             lSimpleSubscription = true;
             break;
         case "clash"_hash:
@@ -346,7 +349,7 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
     tribool argUpload = getUrlArg(argument, "upload"), argEmoji = getUrlArg(argument, "emoji"), argAddEmoji = getUrlArg(
         argument, "add_emoji"), argRemoveEmoji = getUrlArg(argument, "remove_emoji");
     tribool argAppendType = getUrlArg(argument, "append_type"), argTFO = getUrlArg(argument, "tfo"), argUDP = getUrlArg(
-        argument, "udp"), argGenNodeList = getUrlArg(argument, "list");
+        argument, "udp"), argGenNodeList = getUrlArg(argument, "list"), argXUDP = getUrlArg(argument, "xudp");
     tribool argSort = getUrlArg(argument, "sort"), argUseSortScript = getUrlArg(argument, "sort_script");
     tribool argGenClashScript = getUrlArg(argument, "script"), argEnableInsert = getUrlArg(argument, "insert");
     tribool argSkipCertVerify = getUrlArg(argument, "scv"), argFilterDeprecated = getUrlArg(argument,
@@ -435,6 +438,7 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
     /// read preference from argument, assign global var if not in argument
     ext.tfo.define(argTFO).define(global.TFOFlag);
     ext.udp.define(argUDP).define(global.UDPFlag);
+    ext.xudp = argXUDP;
     ext.skip_cert_verify.define(argSkipCertVerify).define(global.skipCertVerify);
     ext.tls13.define(argTLS13).define(global.TLS13Flag);
 
@@ -816,19 +820,20 @@ std::string subconverter(RESPONSE_CALLBACK_ARGS) {
             break;
         case "vless"_hash:
             writeLog(0, "Generate target: vless", LOG_LEVEL_INFO);
-            output_content = proxyToSingle(nodes, 16, ext);
+            output_content = proxyToSingle(nodes, 32, ext);
             if (argUpload)
                 uploadGist("vless", argUploadPath, output_content, false);
             break;
         case "hysteria2"_hash:
             writeLog(0, "Generate target: hysteria2", LOG_LEVEL_INFO);
-            output_content = proxyToSingle(nodes, 32, ext);
+            output_content = proxyToSingle(nodes, 16, ext);
             if (argUpload)
                 uploadGist("hysteria2", argUploadPath, output_content, false);
             break;
         case "mixed"_hash:
+        case "shadowrocket"_hash: // ponytail: Shadowrocket 直接吃标准订阅，与 mixed 相同
             writeLog(0, "Generate target: Standard Subscription", LOG_LEVEL_INFO);
-            output_content = proxyToSingle(nodes, 63, ext);
+            output_content = proxyToSingle(nodes, 511, ext);
             if (argUpload)
                 uploadGist("sub", argUploadPath, output_content, false);
             break;

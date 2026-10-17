@@ -2805,10 +2805,13 @@ void explodeStdHysteria2(std::string hysteria2, Proxy &node) {
     down = getUrlArg(addition, "down");
     alpn = getUrlAlpn(addition);
     obfsParam = getUrlArg(addition, "obfs");
-    obfsPassword = getUrlArg(addition, "obfs-password");
+    obfsPassword = urlDecode(getUrlArg(addition, "obfs-password"));
     host = getUrlArg(addition, "sni");
     sni = getUrlArg(addition, "sni");
     ports = getUrlArg(addition, "ports");
+    // v2rayN / NekoBox 的分享链接用 mport 表示端口跳跃
+    if (ports.empty())
+        ports = urlDecode(getUrlArg(addition, "mport"));
     // authority 中的端口段若为范围/列表，作为端口跳跃保留到 ports，基准端口取首个端口
     if (port.find_first_of(",-") != std::string::npos) {
         if (ports.empty())
@@ -4327,12 +4330,17 @@ void explodeTuic(const std::string &tuic, Proxy &node) {
         add = add.substr(1, add.length() - 2);
 
     scv = getUrlArg(addition, "insecure");
+    // v2rayN / NekoBox 用 allow_insecure
+    if (scv.is_undef())
+        scv = getUrlArg(addition, "allow_insecure");
     alpn = getUrlAlpn(addition);
     sni = getUrlArg(addition, "sni");
     congestion_control = getUrlArg(addition, "congestion_control");
+    std::string udp_relay_mode = getUrlArg(addition, "udp_relay_mode");
     if (remarks.empty())
         remarks = add + ":" + port;
-    tuicConstruct(node, TUIC_DEFAULT_GROUP, remarks, add, port, password, congestion_control, alpn, sni, uuid, "native",
+    tuicConstruct(node, TUIC_DEFAULT_GROUP, remarks, add, port, password, congestion_control, alpn, sni, uuid,
+                  udp_relay_mode.empty() ? "native" : udp_relay_mode,
                   "",
                   tribool(),
                   tribool(), scv);

@@ -564,6 +564,11 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["global-padding"] = x.GlobalPadding.get();
                 if (!x.AuthenticatedLength.is_undef())
                     singleproxy["authenticated-length"] = x.AuthenticatedLength.get();
+                // mihomo VMess 的 xudp 默认关闭（VLESS 默认开启），仅由节点或 xudp 参数开启
+                if (!x.XUDP.is_undef())
+                    singleproxy["xudp"] = x.XUDP.get();
+                else if (xudp && udp)
+                    singleproxy["xudp"] = true;
                 // 新增 mihomo 参数输出
                 if (!x.ClientFingerprint.empty())
                     singleproxy["client-fingerprint"] = x.ClientFingerprint;
@@ -1716,10 +1721,11 @@ std::string proxyToSurge(std::vector<Proxy> &nodes, const std::string &base_conf
 }
 
 std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &ext) {
-    /// types: SS=1 SSR=2 VMess=4 Trojan=8,hysteria2=16,vless=32
+    /// types: SS=1 SSR=2 VMess=4 Trojan=8,hysteria2=16,vless=32,anytls=64,tuic=128,mieru=256
     std::string proxyStr, allLinks;
     bool ss = GETBIT(types, 1), ssr = GETBIT(types, 2), vmess = GETBIT(types, 3), trojan = GETBIT(types, 4), hysteria2 =
-            GETBIT(types, 5), vless = GETBIT(types, 6);
+            GETBIT(types, 5), vless = GETBIT(types, 6), anytls = GETBIT(types, 7), tuic = GETBIT(types, 8),
+            mieru = GETBIT(types, 9);
 
     for (Proxy &x: nodes) {
         std::string remark = x.Remark;
@@ -1788,7 +1794,7 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                 if (!obfsparam.empty()) {
                     proxyStr += "&obfs=" + obfsparam;
                     if (!obfsPassword.empty()) {
-                        proxyStr += "&obfs-password=" + obfsparam;
+                        proxyStr += "&obfs-password=" + urlEncode(obfsPassword);
                     }
                 }
                 if (!sni.empty()) {
@@ -2036,6 +2042,49 @@ std::string proxyToSingle(std::vector<Proxy> &nodes, int types, extra_settings &
                 } else if (transproto == "grpc" && !path.empty()) {
                     proxyStr += "&type=grpc&serviceName=" + urlEncode(path);
                 }
+                proxyStr += "#" + urlEncode(remark);
+                break;
+            case ProxyType::AnyTLS:
+                if (!anytls)
+                    continue;
+                proxyStr = "anytls://" + password + "@" + hostname + ":" + port + "?insecure=" +
+                           (x.AllowInsecure.get() ? "1" : "0");
+                if (!x.SNI.empty())
+                    proxyStr += "&sni=" + urlEncode(x.SNI);
+                if (!fp.empty())
+                    proxyStr += "&fp=" + urlEncode(fp);
+                if (!alpns.empty())
+                    proxyStr += "&alpn=" + urlEncode(join(alpns, ","));
+                if (!x.CertFingerprint.empty())
+                    proxyStr += "&hpkp=" + urlEncode(x.CertFingerprint);
+                proxyStr += "#" + urlEncode(remark);
+                break;
+            case ProxyType::TUIC:
+                // ponytail: TUIC v4（token 认证）没有通行的分享链接格式，跳过
+                if (!tuic || id.empty())
+                    continue;
+                // 参数名沿用 v2rayN / NekoBox 的写法
+                proxyStr = "tuic://" + id + ":" + password + "@" + hostname + ":" + port + "?udp_relay_mode=" +
+                           (x.UdpRelayMode.empty() ? "native" : x.UdpRelayMode);
+                if (!x.CongestionControl.empty())
+                    proxyStr += "&congestion_control=" + x.CongestionControl;
+                if (!sni.empty())
+                    proxyStr += "&sni=" + urlEncode(sni);
+                if (!x.Alpn.empty())
+                    proxyStr += "&alpn=" + urlEncode(x.Alpn);
+                if (x.AllowInsecure.get())
+                    proxyStr += "&allow_insecure=1";
+                proxyStr += "#" + urlEncode(remark);
+                break;
+            case ProxyType::Mieru:
+                if (!mieru)
+                    continue;
+                // mieru 官方简单分享链接：mierus://用户名:密码@服务器?参数，profile 必须出现一次
+                proxyStr = "mierus://" + x.Username + ":" + password + "@" + hostname + "?profile=default&port=" +
+                           (ports.empty() ? port : ports) + "&protocol=" +
+                           (transproto.empty() ? "TCP" : transproto);
+                if (!x.Multiplexing.empty())
+                    proxyStr += "&multiplexing=" + x.Multiplexing;
                 proxyStr += "#" + urlEncode(remark);
                 break;
             default:
@@ -3354,6 +3403,11 @@ proxyToSingBox(std::vector<Proxy> &nodes, rapidjson::Document &json,
                     proxy.AddMember("global_padding", x.GlobalPadding.get(), allocator);
                 if (!x.AuthenticatedLength.is_undef())
                     proxy.AddMember("authenticated_length", x.AuthenticatedLength.get(), allocator);
+                if (!x.PacketEncoding.empty())
+                    proxy.AddMember("packet_encoding",
+                                    rapidjson::StringRef(x.PacketEncoding.c_str()), allocator);
+                else if (xudp && udp)
+                    proxy.AddMember("packet_encoding", rapidjson::StringRef("xudp"), allocator);
 
                 auto transport = buildSingBoxTransport(x, allocator);
                 if (!transport.ObjectEmpty())
