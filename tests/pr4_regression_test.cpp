@@ -4129,6 +4129,22 @@ void test_link_userinfo_special_chars_roundtrip() {
             "a literal '+' in link userinfo must not become a space");
 }
 
+// v2rayN 把 TUIC 的 uuid:password 整段编码成 uuid%3Apassword，需先分 userinfo 再解码切分
+void test_tuic_link_v2rayn_encoded_userinfo() {
+    const std::string uuid = "11111111-2222-3333-4444-555555555555";
+    const Proxy v2n = parse_link("tuic://" + uuid + "%3Ap%40ss%3Ax@tu.example.com:443?sni=tu.example.com&alpn=h3#v");
+    require(v2n.Hostname == "tu.example.com" && v2n.Port == 443 && v2n.UserId == uuid && v2n.Password == "p@ss:x",
+            "v2rayN-encoded TUIC link must parse server, port, uuid and password");
+
+    const Proxy plain = parse_link("tuic://" + uuid + ":pw@[2001:db8::1]:8443/?sni=tu.example.com#p");
+    require(plain.Hostname == "2001:db8::1" && plain.Port == 8443 && plain.UserId == uuid && plain.Password == "pw",
+            "plain TUIC link with bracketed IPv6 must still parse");
+
+    std::vector<Proxy> nodes;
+    explodeSub("tuic://" + uuid + ":pw@tu.example.com?sni=tu.example.com#no-port", nodes);
+    require(nodes.empty(), "TUIC link without port must be dropped");
+}
+
 int main() {
     try {
         test_vmess_conf_reads_mixed_case_wssettings();
@@ -4251,6 +4267,7 @@ int main() {
         test_mieru_link_port_required_and_extra_fields();
         test_anytls_link_default_port();
         test_link_userinfo_special_chars_roundtrip();
+        test_tuic_link_v2rayn_encoded_userinfo();
     } catch (const std::exception &e) {
         std::cerr << "pr4_regression_test failed: " << e.what() << '\n';
         return 1;

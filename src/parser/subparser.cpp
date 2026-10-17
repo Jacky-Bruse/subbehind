@@ -4323,33 +4323,33 @@ void explodeTuic(const std::string &tuic, Proxy &node) {
         link.erase(pos);
     }
 
+    // 先按最后一个 @ 分出 userinfo 再整体解码：v2rayN 会把 uuid:password 整段编码成 uuid%3Apassword，
+    // 先按 ':' 切分会落到 host:port 上，产生空 server 让 mihomo 拒绝整份配置
     std::string uuid;
-    pos = link.find(":");
+    pos = link.rfind("@");
     if (pos != std::string::npos) {
-        uuid = decodeUserinfo(link.substr(0, pos));
-        link = link.substr(pos + 1);
-        pos = link.rfind("@");
-        if (pos != std::string::npos) {
-            password = decodeUserinfo(link.substr(0, pos));
-            link = link.substr(pos + 1);
-        }
+        std::string userinfo = decodeUserinfo(link.substr(0, pos));
+        link.erase(0, pos + 1);
+        // uuid 不含 ':'，按第一个 ':' 切分，密码里的 ':' 得以保留
+        string_size colon = userinfo.find(':');
+        uuid = userinfo.substr(0, colon);
+        if (colon != std::string::npos)
+            password = userinfo.substr(colon + 1);
     }
 
+    if (!link.empty() && link.back() == '/')
+        link.pop_back();
     pos = link.rfind(":");
-    if (pos != std::string::npos) {
+    if (pos != std::string::npos && link.find(']', pos) == std::string::npos) {
         add = link.substr(0, pos);
-        link = link.substr(pos + 1);
-        pos = link.find("?");
-        if (pos != std::string::npos) {
-            port = link.substr(0, pos);
-            addition = link.substr(pos + 1);
-        } else {
-            port = link;
-        }
+        port = link.substr(pos + 1);
     }
 
     if (add.length() > 2 && add.front() == '[' && add.back() == ']')
         add = add.substr(1, add.length() - 2);
+    // mihomo 要求 server 与合法端口，缺失会让整份配置加载失败
+    if (add.empty() || to_int(port, 0) <= 0)
+        return;
 
     scv = getUrlArg(addition, "insecure");
     // v2rayN / NekoBox 用 allow_insecure
