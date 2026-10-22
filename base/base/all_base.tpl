@@ -202,6 +202,7 @@ tun:
   stack: system
   auto-route: true
   auto-detect-interface: true
+  dns-mode: hijack # v1.19.33+，旧内核忽略；Windows 防 DNS 泄漏依赖 strict-route
   dns-hijack:
     - any:53
     - tcp://any:53
