@@ -9,7 +9,6 @@ log-level: {{ default(global.clash.log_level, "info") }}
 external-controller: {{ default(global.clash.external_controller, "127.0.0.1:9090") }}
 secret: {{ yaml_quote(default(global.clash.secret, "")) }}
 find-process-mode: strict # 进程模式 off / strict / always
-global-client-fingerprint: chrome
 tcp-concurrent: true # TCP 并发 如果域名解析结果对应多个IP,并发请求所有IP,选择握手最快的IP进行通讯
 keep-alive-interval: 30 # TCP Keep Alive 间隔,单位秒 | 控制 Clash 发出 TCP Keep Alive 包的间隔,减少移动设备耗电问题的临时措施
 # ---- 内核优化参数 ----

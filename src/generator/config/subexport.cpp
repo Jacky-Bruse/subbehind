@@ -1174,6 +1174,11 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["certificate"] = x.Certificate;
                 if (!x.PrivateKeyPem.empty())
                     singleproxy["private-key"] = x.PrivateKeyPem;
+                // mihomo v1.19.27 移除了 global-client-fingerprint，缺省指纹会退回 Go
+                // 原生 TLS 握手特征；未显式指定的 TLS 节点按旧全局值补 chrome
+                if (!clashR && !singleproxy["client-fingerprint"].IsDefined() &&
+                    (x.TLSSecure || x.Type == ProxyType::Trojan || x.Type == ProxyType::AnyTLS))
+                    singleproxy["client-fingerprint"] = "chrome";
                 break;
             default:
                 break;

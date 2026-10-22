@@ -3567,6 +3567,39 @@ void test_vless_client_fingerprint_output() {
         require(clashRExported.find("client-fingerprint: random") != std::string::npos,
                 "the chrome default must be scoped to target=clash");
     }
+    // mihomo 已移除 global-client-fingerprint：未带 fp 的 TLS 节点补 chrome，
+    // 非 TLS 节点不补，显式值不被覆盖
+    {
+        const std::string content = R"(proxies:
+  - {name: tj, type: trojan, server: t.example.com, port: 443, password: p}
+  - {name: at, type: anytls, server: a.example.com, port: 443, password: p}
+  - {name: vm-tls, type: vmess, server: v.example.com, port: 443, uuid: 12345678-1234-1234-1234-123456789012, alterId: 0, cipher: auto, tls: true}
+  - {name: vl-tls, type: vless, server: l.example.com, port: 443, uuid: 12345678-1234-1234-1234-123456789012, tls: true}
+  - {name: vm-plain, type: vmess, server: p.example.com, port: 80, uuid: 12345678-1234-1234-1234-123456789012, alterId: 0, cipher: auto}
+  - {name: vl-ff, type: vless, server: f.example.com, port: 443, uuid: 12345678-1234-1234-1234-123456789012, tls: true, client-fingerprint: firefox}
+)";
+        std::vector<Proxy> nodes;
+        explodeSub(content, nodes);
+        require(nodes.size() == 6, "expected six nodes");
+        std::vector<RulesetContent> rulesets;
+        ProxyGroupConfigs groups;
+        extra_settings ext;
+        ext.nodelist = true;
+        ext.clash_new_field_name = true;
+        const YAML::Node proxies = YAML::Load(proxyToClash(nodes, "", rulesets, groups, false, ext))["proxies"];
+        const std::map<std::string, std::string> want{
+            {"tj", "chrome"}, {"at", "chrome"}, {"vm-tls", "chrome"},
+            {"vl-tls", "chrome"}, {"vm-plain", ""}, {"vl-ff", "firefox"}};
+        for (const auto &p : proxies) {
+            const std::string name = p["name"].as<std::string>();
+            const std::string got = p["client-fingerprint"].IsDefined() ? p["client-fingerprint"].as<std::string>() : "";
+            require(got == want.at(name), name + ": client-fingerprint expected '" + want.at(name) + "', got '" + got + "'");
+        }
+        const YAML::Node clashR = YAML::Load(proxyToClash(nodes, "", rulesets, groups, true, ext))["proxies"];
+        for (const auto &p : clashR)
+            if (p["name"].as<std::string>() == "tj")
+                require(!p["client-fingerprint"].IsDefined(), "plain TLS chrome default must be scoped to target=clash");
+    }
 }
 
 void test_clash_xray_auxiliary_options_roundtrip() {
