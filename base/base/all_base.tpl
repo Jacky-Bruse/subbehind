@@ -198,7 +198,7 @@ dns:
 # tproxy-port: 7895
 tun:
   enable: true
-  stack: system
+  # stack 不写，交给内核默认（v1.19.33+ 为 mips，更早为 gvisor）；显式写 mips 会让 v1.19.31 以下内核报 invalid tun stack
   auto-route: true
   auto-detect-interface: true
   dns-mode: hijack # v1.19.33+，旧内核忽略；Windows 防 DNS 泄漏依赖 strict-route
