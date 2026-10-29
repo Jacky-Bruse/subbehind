@@ -705,7 +705,15 @@ proxyToClash(std::vector<Proxy> &nodes, YAML::Node &yamlnode, const ProxyGroupCo
                     singleproxy["reality-opts"]["public-key"] = x.PublicKey;
                     if (!x.ShortId.empty())
                         setYamlString(singleproxy["reality-opts"]["short-id"], x.ShortId, true);
-                    if (!x.SupportX25519MLKEM768.is_undef())
+                    // 新版 REALITY 服务端拒绝缺 X25519MLKEM768 的 ClientHello，与承载协议无关，
+                    // 同 VLESS 一样对 mihomo 强制开启
+                    if (!clashR) {
+                        if (!x.SupportX25519MLKEM768.is_undef() && !x.SupportX25519MLKEM768.get())
+                            writeLog(0, "Node '" + x.Remark + "': overriding explicit "
+                                        "support-x25519mlkem768=false for mihomo Trojan REALITY export",
+                                     LOG_LEVEL_WARNING);
+                        singleproxy["reality-opts"]["support-x25519mlkem768"] = true;
+                    } else if (!x.SupportX25519MLKEM768.is_undef())
                         singleproxy["reality-opts"]["support-x25519mlkem768"] =
                             x.SupportX25519MLKEM768.get();
                 }

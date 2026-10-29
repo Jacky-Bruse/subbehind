@@ -1550,50 +1550,58 @@ void test_clash_reality_support_x25519mlkem768_roundtrip() {
     }
 }
 
-// target=clash 代表 mihomo，服务端基线为 Xray-core >= 26.9.8：VLESS REALITY
+// target=clash 代表 mihomo，服务端基线为 Xray-core >= 26.9.8：REALITY 服务端拒绝
+// 缺 X25519MLKEM768 的 ClientHello（与承载协议无关），VLESS/Trojan REALITY
 // 无论输入三态为何，导出均开启 ML-KEM，但不得回写内部原值。
-void test_clash_vless_reality_forces_x25519mlkem768_on_export() {
-    const std::string content = R"(proxies:
+void test_clash_reality_forces_x25519mlkem768_on_export() {
+    const std::string tmpl = R"(proxies:
   - name: reality-plain
-    type: vless
+    type: %TYPE%
     server: r.example.com
     port: 443
     uuid: 12345678-1234-1234-1234-123456789012
+    password: secret
     tls: true
     network: tcp
     reality-opts:
       public-key: pbk-value
       short-id: aabbccdd
 )";
-    Proxy node = parse_clash(content);
-    require(node.SupportX25519MLKEM768.is_undef(),
-            "missing support-x25519mlkem768 must remain unset internally");
-    std::vector<Proxy> nodes{node};
-    std::vector<RulesetContent> rulesets;
-    ProxyGroupConfigs groups;
-    extra_settings ext;
-    ext.nodelist = true;
-    ext.clash_new_field_name = true;
-    const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
-    require(YAML::Load(exported)["proxies"][0]["reality-opts"]
-                ["support-x25519mlkem768"].as<bool>(),
-            "VLESS REALITY must force support-x25519mlkem768=true for mihomo");
-    require(nodes[0].SupportX25519MLKEM768.is_undef(),
-            "Clash export must not mutate the internal ML-KEM tri-state");
+    for (const char *type : {"vless", "trojan"}) {
+        const std::string t(type);
+        std::string content = tmpl;
+        content.replace(content.find("%TYPE%"), 6, type);
 
-    node.SupportX25519MLKEM768 = false;
-    nodes = {node};
-    const std::string falseExported = proxyToClash(nodes, "", rulesets, groups, false, ext);
-    require(YAML::Load(falseExported)["proxies"][0]["reality-opts"]
-                ["support-x25519mlkem768"].as<bool>(),
-            "explicit false must be overridden in mihomo VLESS REALITY output");
-    require(!nodes[0].SupportX25519MLKEM768.get(),
-            "overriding output must not change explicit false internally");
+        Proxy node = parse_clash(content);
+        require(node.SupportX25519MLKEM768.is_undef(),
+                t + ": missing support-x25519mlkem768 must remain unset internally");
+        std::vector<Proxy> nodes{node};
+        std::vector<RulesetContent> rulesets;
+        ProxyGroupConfigs groups;
+        extra_settings ext;
+        ext.nodelist = true;
+        ext.clash_new_field_name = true;
+        const std::string exported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+        require(YAML::Load(exported)["proxies"][0]["reality-opts"]
+                    ["support-x25519mlkem768"].as<bool>(),
+                t + " REALITY must force support-x25519mlkem768=true for mihomo");
+        require(nodes[0].SupportX25519MLKEM768.is_undef(),
+                t + ": Clash export must not mutate the internal ML-KEM tri-state");
 
-    const std::string clashRExported = proxyToClash(nodes, "", rulesets, groups, true, ext);
-    require(!YAML::Load(clashRExported)["proxies"][0]["reality-opts"]
-                ["support-x25519mlkem768"].as<bool>(),
-            "the target=clash override must not change ClashR output");
+        node.SupportX25519MLKEM768 = false;
+        nodes = {node};
+        const std::string falseExported = proxyToClash(nodes, "", rulesets, groups, false, ext);
+        require(YAML::Load(falseExported)["proxies"][0]["reality-opts"]
+                    ["support-x25519mlkem768"].as<bool>(),
+                t + ": explicit false must be overridden in mihomo REALITY output");
+        require(!nodes[0].SupportX25519MLKEM768.get(),
+                t + ": overriding output must not change explicit false internally");
+
+        const std::string clashRExported = proxyToClash(nodes, "", rulesets, groups, true, ext);
+        require(!YAML::Load(clashRExported)["proxies"][0]["reality-opts"]
+                    ["support-x25519mlkem768"].as<bool>(),
+                t + ": the target=clash override must not change ClashR output");
+    }
 }
 
 // download-settings 的 reality-opts 同样承载这个字段
@@ -4220,7 +4228,7 @@ int main() {
         test_clash_tls_cert_fields_roundtrip_all_protocols();
         test_vless_link_browser_fingerprint_not_leaked_as_cert_fingerprint();
         test_clash_reality_support_x25519mlkem768_roundtrip();
-        test_clash_vless_reality_forces_x25519mlkem768_on_export();
+        test_clash_reality_forces_x25519mlkem768_on_export();
         test_clash_download_settings_x25519mlkem768();
         test_clash_basic_option_dialer_fields_roundtrip();
         test_clash_basic_option_omits_unset_dialer_fields();
